@@ -3185,20 +3185,42 @@ function subscribeRoom(code){
 }
 
 
-async function joinRoom(code){
+async function joinRoom(code) {
   currentRoomCode = code;
-  try{
+  try {
     const existing = await fetchRoom(code);
 
-    if (existing && existing.state && existing.state.length){
+    if (existing && existing.state && existing.state.length) {
       // Load existing shared map state
       await applyStateArray(existing.state);
+
+      // =============================================
+      // Hide shrink-related layers by default on load
+      // =============================================
+      if (code === "silver") {  // only affect silver room
+        const HIDDEN_LAYERS_ON_JOIN = ["Shrink Pattern", "Past Coin Shrinks"];
+
+        HIDDEN_LAYERS_ON_JOIN.forEach(name => {
+          const entry = typeof getOrCreateLayerByName === "function"
+            ? getOrCreateLayerByName(name)
+            : null;
+          if (!entry) return;
+          entry.visible = false; // mark hidden initially
+          try {
+            if (typeof applyVisibility === "function") applyVisibility(entry);
+            if (typeof renderLayers === "function") renderLayers();
+          } catch (e) {
+            console.warn(`Could not hide ${name} layer on load:`, e);
+          }
+        });
+      }
+      // =============================================
 
       // (Optional but safe) if Pixel Grid data already exists, hydrate it immediately.
       // bindToRoom will also fetch — this just makes first paint feel snappier.
       if (existing.pixelgrid && window.PixelGrid && typeof window.PixelGrid.applyRemote === 'function') {
         const who = existing.pixelgrid_updated_by || existing.updated_by;
-        try { window.PixelGrid.applyRemote(existing.pixelgrid, who); } catch {}
+        try { window.PixelGrid.applyRemote(existing.pixelgrid, who); } catch { }
       }
 
       // Load and apply geohash overlays
@@ -3206,17 +3228,17 @@ async function joinRoom(code){
         try {
           await loadGeohashState();
           console.log('Geohash state loaded from database');
-          
+
           // Wait longer for the geohash KMZ to fully load and create its source
           glReady(() => {
             // Try multiple times with increasing delays
             let attempts = 0;
             const maxAttempts = 5;
-            
+
             const tryApply = () => {
               attempts++;
               const sourceId = (typeof findGeohashSourceId === 'function') ? findGeohashSourceId() : null;
-              
+
               if (sourceId) {
                 console.log('✓ Geohash source found:', sourceId);
                 if (typeof window.applyGeohashOverlays === 'function') {
@@ -3230,7 +3252,7 @@ async function joinRoom(code){
                 console.warn('Geohash source not found after', maxAttempts, 'attempts. You may need to click Apply manually.');
               }
             };
-            
+
             // Start first attempt after 1.5 seconds
             setTimeout(tryApply, 1500);
           });
@@ -3244,16 +3266,16 @@ async function joinRoom(code){
 
       try {
         await loadKMZFromUrl(encodeURI(PRELOAD_GEOHASHES), 'Geohashes');
-      } catch(e) {
+      } catch (e) {
         console.warn('Preload geohashes failed', e);
       }
 
-      for (const name of PRELOAD_COINS){
+      for (const name of PRELOAD_COINS) {
         try {
           await loadKMZFromUrl(encodeURI(name));
           console.log('Preloaded', name);
           break; // stop after first successful preload
-        } catch(e){
+        } catch (e) {
           console.warn('Preload failed for', name);
         }
       }
@@ -3271,11 +3293,12 @@ async function joinRoom(code){
       window.PixelGrid.bindToRoom({ supabase, currentRoomCode: code, clientId });
     }
 
-  } catch(e){
+  } catch (e) {
     console.error('Join failed', e);
     throw e;
   }
 }
+
 
 
 /* ===== Server Modal helpers ===== */
