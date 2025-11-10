@@ -141,44 +141,85 @@ a{color:var(--accent)}
 .pg-canvas-wrap::-webkit-scrollbar{height:8px;width:8px}
 .pg-canvas-wrap{scrollbar-width:thin;scrollbar-color:var(--border) transparent}
 
-/* Loading Bar Styles */
+/* Loading Container */
+/* Ensure the Loading Container is centered */
 #loading-container {
-  display: none;
+  display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   position: absolute;
-  top: 35%;
+  top: 30%;
   left: 50%;
   transform: translateX(-50%);
   z-index: 1000;
-  color: var(--text);
-  font-size: 16px;
+  font-size: 18px;
+  font-weight: bold;
+  color: white !important; /* This forces the text color to be white */
+  visibility: visible !important; /* Ensures the container is shown when active */
+  opacity: 1; /* Ensure opacity is not zero */
+  transition: opacity 0.3s ease; /* Smooth transition if you toggle visibility */
 }
+
+/* Ensure the "Joining..." text inside the loading container is styled correctly */
+#loading-container p {
+  font-size: 18px;
+  font-weight: bold;
+  color: white !important; /* Reaffirm white color for the text */
+  margin-top: 10px;  /* Adds spacing between the loading bar and text */
+  font-family: 'Arial', sans-serif; /* Or your preferred font */
+}
+
+/* Loading Bar Styling */
 .loading-bar {
-  width: 200px;
-  height: 10px;
-  background-color: var(--border);
-  border-radius: 5px;
+  width: 300px;
+  height: 20px;
+  background-color: #333;
+  border-radius: 10px;
   position: relative;
   overflow: hidden;
-  margin-bottom: 10px;
+  margin-bottom: 15px;
+  border: 2px solid white; /* White border for the loading bar */
 }
-.loading-bar::after {
+
+/* Loading Segments (animation) */
+.loading-bar::before, 
+.loading-bar::after,
+.loading-bar .loading-segment {
   content: '';
   position: absolute;
   top: 0;
-  left: -100%;
-  width: 100%;
+  width: 33%;
   height: 100%;
-  background-color: var(--accent);
+  background-color: #DE73FF; /* Purple color for the loading segments */
   animation: loading 3s infinite;
+  opacity: 0.8;
 }
+
+.loading-bar::before {
+  left: -100%;
+  animation-delay: 0s;
+}
+
+.loading-bar::after {
+  left: -100%;
+  animation-delay: 1s;
+}
+
+/* Third segment */
+.loading-bar .loading-segment {
+  left: -100%;
+  animation-delay: 2s;
+  opacity: 0.6;
+}
+
+/* Keyframe for loading animation */
 @keyframes loading {
   0% { left: -100%; }
   50% { left: 0; }
   100% { left: 100%; }
 }
+
 
 
 /* --- Pixel Grid layout fix --- */
@@ -1873,23 +1914,27 @@ function panPopupIntoViewGL(lngLat,liftPx=220){ const p=mapgl.project(lngLat); p
 
 let leafletCircleTheme = 'on-gl'; // 'on-gl' (dark map) or 'on-osm' (light OSM tiles)
 
-function circleStyleForLeaflet(props){
-  // Flip stroke to dark on OSM so circles don’t scream on a light basemap
+function circleStyleForLeaflet(props = {}) {
   const onOSM = (leafletCircleTheme === 'on-osm');
-  const stroke = onOSM ? '#0b0d11' : (props._stroke || '#ffffff');
+  // Adjust stroke color based on theme
+  const stroke = onOSM ? '#888888' : (props._stroke || '#ffffff'); // Lighter gray for OSM
   const fill   = props._fill || '#ffffff';
+  const baseFillOp = (props._fillOpacity ?? 0.18);
+  const fillOpacity = onOSM ? Math.min(0.30, baseFillOp + 0.08) : baseFillOp;
+  const strokeOpacity = (props._strokeOpacity ?? 0.7);
+  const weight        = (props._weight ?? 2);
+  const strokeOn      = (strokeOpacity > 0) && (weight > 0);
 
-  return {
-    color: stroke,
-    weight: (props._weight ?? 2),
-    opacity: (props._strokeOpacity ?? 0.7),
-    fillColor: fill,
-    // nudge opacity a touch higher on OSM to stay visible on light tiles
-    fillOpacity: onOSM ? Math.min(0.30, (props._fillOpacity ?? 0.18) + 0.08)
-                       : (props._fillOpacity ?? 0.18),
-    stroke: ((props._strokeOpacity ?? 0.2) > 0) && ((props._weight ?? 2) > 0)
+  return { 
+    color: stroke, 
+    weight, 
+    opacity: strokeOpacity, 
+    fillColor: fill, 
+    fillOpacity, 
+    stroke: strokeOn 
   };
 }
+
 
 function restyleAllLeafletPolys(){
   layerList.forEach(entry => {
