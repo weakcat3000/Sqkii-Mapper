@@ -29,8 +29,7 @@
   <!-- Preload button click sound for instant play -->
   <link rel="preload" href="button.mp3" as="audio" />
 
-  <!-- ===== Condensed styles ===== -->
-  <style>
+<style>
 :root{
   --panel:#0f1115;--panel-2:#12151b;--muted:#98a2b3;--text:#e5e7eb;
   --accent:#60a5fa;--border:#1f2430;--bg:#0b0d11;--chip:#1c212e;--side:300px;
@@ -47,14 +46,17 @@
 .sidebar::-webkit-scrollbar{width:6px}
 .sidebar:hover::-webkit-scrollbar{width:10px}
 html,body,.sidebar,.grp-list,#layers{scrollbar-width:thin;scrollbar-color:var(--border) var(--bg)}
+
 /* Base layout */
 html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
 .app{position:relative;display:grid;grid-template-columns:var(--side) 1fr;height:100vh;transition:grid-template-columns .28s ease}
 .ui-reopen{position:absolute;left:10px;top:10px;z-index:1100;display:none;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:6px 10px;font-weight:700;cursor:pointer;box-shadow:0 2px 14px rgba(0,0,0,.35);color:var(--text)}
 .app.ui-collapsed .ui-reopen{display:inline-block}
 .sidebar{position:relative;background:var(--panel);border-right:1px solid var(--border);overflow:auto;width:var(--side);transition:width .28s ease;isolation:isolate}
+
 /* Purple “dark veil” overlay */
 .darkveil-canvas{position:absolute;inset:0;z-index:5;pointer-events:none;opacity:.35;mix-blend-mode:overlay;filter:saturate(1.05) contrast(1.06) brightness(.98)}
+
 .header{position:relative;z-index:1;padding:12px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center}
 .project-title{font-weight:800;font-size:16px;display:flex;gap:8px;align-items:center}
 .toolbar{position:relative;z-index:1;display:flex;gap:8px;flex-wrap:wrap}
@@ -67,6 +69,7 @@ html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px/
 .row-split{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:center}
 input[type="url"],select,input[type="text"],input[type="number"]{position:relative;z-index:1;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:8px;padding:8px 10px;background:var(--panel-2);color:var(--text)}
 #mapgl,#mapleaf{height:100%;width:100%}
+
 /* Layers list */
 .layers-empty{padding:14px;position:relative;z-index:1}
 .layer{position:relative;z-index:1;border-bottom:1px solid var(--border);background:var(--panel-2)}
@@ -76,14 +79,17 @@ input[type="url"],select,input[type="text"],input[type="number"]{position:relati
 .layer-head .actions{display:flex;gap:6px;flex-wrap:wrap}
 .import-line{padding:8px 12px;background:#0e1420;border-top:1px solid var(--border)}
 .import-line .link{color:var(--accent);font-weight:600;cursor:pointer}
+
 /* Feature rows (compact) */
 .feature{display:grid;grid-template-columns:14px 1fr auto auto;gap:4px;align-items:center;padding:2px 8px;border-top:1px solid var(--border)}
 .feature .name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;font-size:11px;line-height:1.15}
 .group-bullet{width:14px;height:14px;border-radius:999px;display:grid;place-items:center;border:1px solid #2a3243;background:#11161f;color:#fff;font-size:9px;font-weight:800}
+
 /* Visibility eye button */
 .eye-btn{display:inline-grid;place-items:center;width:30px;height:22px;border:1px solid var(--border);border-radius:8px;background:var(--panel-2);cursor:pointer}
 .eye-btn svg{width:14px;height:14px;stroke:#e5e7eb;fill:none;stroke-width:2}
 .eye-btn.off{opacity:.6}
+
 /* Toggles + chips */
 .toggle{display:inline-grid;place-items:center;width:16px;height:16px;border:1px solid #2a3243;border-radius:4px;background:#0f141d;cursor:pointer}
 .toggle.checked{background:#16a34a;border-color:#16a34a}
@@ -96,6 +102,7 @@ details.grp>summary::-webkit-details-marker{display:none}
 .ui-hide,#edit-toggle{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:6px 10px;font-weight:700;box-shadow:0 2px 14px rgba(0,0,0,.35);color:var(--text)}
 #edit-toggle.off{opacity:.6}
 a{color:var(--accent)}
+
 /* Popups */
 .maplibregl-popup-content,.leaflet-popup-content-wrapper{background:#0f1115;color:#e5e7eb;border:1px solid #1f2430;border-radius:12px}
 .maplibregl-popup-tip,.leaflet-popup-tip{background:#0f1115}
@@ -104,6 +111,7 @@ a{color:var(--accent)}
   background:rgba(0,0,0,.55);border-radius:50%;border:none;box-shadow:0 2px 6px rgba(0,0,0,.35);text-shadow:none;opacity:1;z-index:2
 }
 .maplibregl-popup-close-button:hover,.leaflet-popup-close-button:hover{filter:brightness(1.15)}
+
 /* Style editor modal */
 .style-editor{position:fixed;z-index:1200;display:none;min-width:240px;max-width:280px;background:#0f1115;color:#e5e7eb;border:1px solid #1f2430;border-radius:12px;padding:12px;box-shadow:0 12px 32px rgba(0,0,0,.45)}
 .style-editor h4{margin:0 0 8px 0;font-size:14px}
@@ -111,10 +119,12 @@ a{color:var(--accent)}
 .style-row input[type="color"],.style-row input[type="number"],.style-row input[type="range"]{width:100%;background:#12151b;border:1px solid #1f2430;color:#e5e7eb;border-radius:8px;padding:6px 8px}
 .style-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:6px}
 .style-actions .btn{padding:6px 10px}
+
 /* Map style row */
 .mapstyle-row{position:relative;z-index:1;padding:12px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:1fr auto;gap:14px;align-items:start}
 .mapstyle-right{color:var(--muted);font-size:12px;text-align:right;line-height:1.35;max-width:240px;padding-top:2px}
 .mapstyle-left .label{color:var(--muted);font-size:12px;margin-bottom:4px}
+
 /* Server/Sonar modals */
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;place-items:center;z-index:2000}
 .modal.visible{display:grid}
@@ -125,10 +135,51 @@ a{color:var(--accent)}
 .modal .err{color:#f87171;font-weight:700;margin-top:6px;display:none}
 .app.blocked-by-modal{pointer-events:none}
 .modal,.modal *{pointer-events:auto}
+
 /* Pixel Grid tweaks */
 #pg-bulk{white-space:pre-wrap}
 .pg-canvas-wrap::-webkit-scrollbar{height:8px;width:8px}
 .pg-canvas-wrap{scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+
+/* Loading Bar Styles */
+#loading-container {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  top: 35%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  color: var(--text);
+  font-size: 16px;
+}
+.loading-bar {
+  width: 200px;
+  height: 10px;
+  background-color: var(--border);
+  border-radius: 5px;
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+.loading-bar::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background-color: var(--accent);
+  animation: loading 3s infinite;
+}
+@keyframes loading {
+  0% { left: -100%; }
+  50% { left: 0; }
+  100% { left: 100%; }
+}
+
 
 /* --- Pixel Grid layout fix --- */
 #pixelgrid-modal .pg-modal-card{
@@ -350,10 +401,15 @@ a{color:var(--accent)}
   </div>
 </div>
 
+<!-- Add the loading container above the joining box -->
+<div id="loading-container" style="display: none;">
+  <div class="loading-bar"></div>
+  <p>Joining...</p>
+</div>
+
+
 <!-- ===== Server Code Modal ===== -->
 <div id="server-modal" class="modal">
-
-
   <div class="modal-card">
     <h3>Join a server</h3>
     <small>Enter your shared <strong>Server Code</strong> to sync with others.</small>
@@ -3310,26 +3366,37 @@ const serverErr = document.getElementById('server-error');
 function showServerModal(){ modal.classList.add('visible'); appEl.classList.add('blocked-by-modal'); }
 function hideServerModal(){ modal.classList.remove('visible'); appEl.classList.remove('blocked-by-modal'); }
 
-serverJoin.addEventListener('click', async ()=>{
-  const code = (serverInput.value||'').trim();
-  if(!code){ serverErr.textContent='Please enter a server code.'; serverErr.style.display='block'; return; }
-  serverErr.style.display='none';
-  serverJoin.disabled=true; serverJoin.textContent='Joining...';
-  try{
+serverJoin.addEventListener('click', async () => {
+  const code = (serverInput.value || '').trim();
+  if (!code) {
+    serverErr.textContent = 'Please enter a server code.';
+    serverErr.style.display = 'block';
+    return;
+  }
+  
+  // Show the loading bar
+  document.getElementById('loading-container').style.display = 'flex';
+  
+  serverErr.style.display = 'none';
+  serverJoin.disabled = true;
+  serverJoin.textContent = 'Joining...';
+  
+  try {
     await joinRoom(code);
     hideServerModal();
-  }catch(e){
+  } catch (e) {
     console.error('Join failed', e);
-    serverErr.textContent='Join failed: '+(e?.message||'Check connection / DNS / RLS / table.');
-    serverErr.style.display='block';
-  }finally{
-    serverJoin.disabled=false; serverJoin.textContent='Join';
+    serverErr.textContent = 'Join failed: ' + (e?.message || 'Check connection / DNS / RLS / table.');
+    serverErr.style.display = 'block';
+  } finally {
+    serverJoin.disabled = false;
+    serverJoin.textContent = 'Join';
+    
+    // Hide the loading bar once done
+    document.getElementById('loading-container').style.display = 'none';
   }
 });
-document.getElementById('server-continue').addEventListener('click', ()=>{
-  hideServerModal();
-  try{ const raw=localStorage.getItem(LS_KEY); if(raw) applyStateArray(JSON.parse(raw)); }catch{}
-});
+
 
 /* ====================== AUDIO + SFX (stable) ====================== */
 let audioEnabled = true;
