@@ -415,6 +415,24 @@ a{color:var(--accent)}
       </div>
     </div>
 
+    <!-- Draw Line quick tool -->
+    <div style="padding:12px;border-bottom:1px solid var(--border);display:grid;gap:8px; position:relative; z-index:1;">
+      <div style="display:grid;grid-template-columns:1fr auto;gap:8px;">
+        <button class="btn" id="draw-line">DRAW LINE</button>
+        <button class="btn" id="pick-location-line" title="Pick location from map">📍</button>
+      </div>
+
+      <!-- inputs for line: lat,lng, degree, length + Add -->
+      <div id="line-inputs" class="line-grid" style="display:none;">
+        <input id="line-coord" type="text" placeholder="Latitude,Longitude (e.g. 1.3521,103.8198)" inputmode="text" />
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <input id="line-degree" type="number" min="0" max="360" step="1" placeholder="Degree (0-360)" inputmode="decimal" />
+          <input id="line-length" type="number" min="1" step="1" placeholder="Length (meters)" inputmode="decimal" />
+        </div>
+        <button class="btn small" id="line-apply">Add Line</button>
+      </div>
+    </div>
+
     <details class="grp" id="group-visibility" open>
       <summary>Groups visibility</summary>
       <div class="grp-list" id="grp-list"></div>
@@ -2202,6 +2220,7 @@ function verifyLayerOnGL(entry) {
 
     attachLongPressGL(fillId, entry);
     attachLongPressGL(polyEdgeId, entry);
+    attachLongPressGL(lineId, entry);  
 
     // Ensure fresh data binds and visibility is respected (prevents ghost layers)
     refreshGroupGL(entry);
@@ -2677,15 +2696,117 @@ byId('draw-apply').addEventListener('click', ()=>{
   const m = coord.match(/^\s*([+-]?\d+(\.\d+)?)\s*,\s*([+-]?\d+(\.\d+)?)\s*$/);
   if(!m || !isFinite(radius) || radius<=0){ alert('Please enter "lat,lng" and a positive radius.'); return; }
   const lat = parseFloat(m[1]), lng = parseFloat(m[3]);
-  addCircleToLayer([lng,lat], radius, 'red', 'Circles'); // always into Circles layer
+  addCircleToLayer([lng,lat], radius, 'red', 'Circles');
+});
+
+/* Draw Line tool */
+const lineBtn = byId('draw-line'), lineBox = byId('line-inputs');
+lineBtn.addEventListener('click', ()=>{ lineBox.style.display = lineBox.style.display==='none'?'grid':'none'; });
+
+// Helper function to calculate destination point given start, bearing, and distance
+function destinationPoint(lng, lat, bearingDeg, distanceMeters) {
+  const R = 6378137; // Earth radius in meters
+  const bearing = bearingDeg * Math.PI / 180;
+  const lat1 = lat * Math.PI / 180;
+  const lng1 = lng * Math.PI / 180;
+  
+  const lat2 = Math.asin(
+    Math.sin(lat1) * Math.cos(distanceMeters / R) +
+    Math.cos(lat1) * Math.sin(distanceMeters / R) * Math.cos(bearing)
+  );
+  
+  const lng2 = lng1 + Math.atan2(
+    Math.sin(bearing) * Math.sin(distanceMeters / R) * Math.cos(lat1),
+    Math.cos(distanceMeters / R) - Math.sin(lat1) * Math.sin(lat2)
+  );
+  
+  return [lng2 * 180 / Math.PI, lat2 * 180 / Math.PI];
+}
+
+// Add line to layer
+function addLineToLayer(startLngLat, degree, lengthMeters, layerName) {
+  const entry = getOrCreateLayerByName(layerName);
+  const fid = String(featureSeq++);
+  
+  const endPoint = destinationPoint(startLngLat[0], startLngLat[1], degree, lengthMeters);
+  
+  const geom = {
+    type: 'LineString',
+    coordinates: [startLngLat, endPoint]
+  };
+  
+  const name = `Line ${lengthMeters}m @ ${degree}° @ ${timestampLabel()}`;
+  const props = {
+    fid, name, hidden: false, _gid: fid, _ts: Date.now(),
+    _stroke: '#3b82f6', _strokeOpacity: 0.9, _weight: 3
+  };
+  
+  entry.data.features.push({ type: 'Feature', geometry: geom, properties: props });
+  entry.items = rebuildItemsFromFeatures(entry.data.features);
+  refreshGroupBoth(entry);
+  applyVisibility(entry);
+  renderLayers(); renderGroupsVisibility(); saveState();
+  
+  const bbox = turf.bbox(geom);
+  if(engine === 'gl') {
+    mapgl.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], {padding: 40, duration: 500});
+  } else {
+    mapleaf.fitBounds([[bbox[1], bbox[0]], [bbox[3], bbox[2]]], {padding: [40, 40]});
+  }
+}
+
+byId('line-apply').addEventListener('click', ()=>{
+  const coord = byId('line-coord').value.trim();
+  const degree = parseFloat(byId('line-degree').value);
+  const length = parseFloat(byId('line-length').value);
+  
+  const m = coord.match(/^\s*([+-]?\d+(\.\d+)?)\s*,\s*([+-]?\d+(\.\d+)?)\s*$/);
+  
+  if(!m) { 
+    alert('Please enter valid coordinates in "lat,lng" format.'); 
+    return; 
+  }
+  if(!isFinite(degree) || degree < 0 || degree > 360) { 
+    alert('Please enter a degree between 0 and 360.'); 
+    return; 
+  }
+  if(!isFinite(length) || length <= 0) { 
+    alert('Please enter a positive length in meters.'); 
+    return; 
+  }
+  
+  const lat = parseFloat(m[1]), lng = parseFloat(m[3]);
+  addLineToLayer([lng, lat], degree, length, 'Lines');
 });
 
 /* Pick Location tool */
 let pickingLocation = false;
+let pickingForTool = null; // 'circle' or 'line'
 
 byId('pick-location').addEventListener('click', ()=>{
   pickingLocation = !pickingLocation;
+  pickingForTool = pickingLocation ? 'circle' : null;
   const btn = byId('pick-location');
+  
+  if(pickingLocation){
+    btn.style.background = 'rgba(96,165,250,0.2)';
+    btn.style.borderColor = '#60a5fa';
+    btn.title = 'Click map to get coordinates (click again to cancel)';
+    mapgl.getCanvas().style.cursor = 'crosshair';
+    if(engine === 'leaf') mapleaf.getContainer().style.cursor = 'crosshair';
+  } else {
+    btn.style.background = '';
+    btn.style.borderColor = '';
+    btn.title = 'Pick location from map';
+    mapgl.getCanvas().style.cursor = '';
+    if(engine === 'leaf') mapleaf.getContainer().style.cursor = '';
+  }
+});
+
+byId('pick-location-line').addEventListener('click', ()=>{
+  pickingLocation = !pickingLocation;
+  pickingForTool = pickingLocation ? 'line' : null;
+  const btn = byId('pick-location-line');
   
   if(pickingLocation){
     btn.style.background = 'rgba(96,165,250,0.2)';
@@ -2710,21 +2831,28 @@ mapgl.on('click', (e)=>{
   
   const {lng, lat} = e.lngLat;
   
-  // Fill the coordinate input box
-  byId('draw-coord').value = `${lat.toFixed(6)},${lng.toFixed(6)}`;
+  if(pickingForTool === 'circle'){
+    byId('draw-coord').value = `${lat.toFixed(6)},${lng.toFixed(6)}`;
+    drawBox.style.display = 'grid';
+    
+    pickingLocation = false;
+    const btn = byId('pick-location');
+    btn.style.background = '';
+    btn.style.borderColor = '';
+    btn.title = 'Pick location from map';
+  } else if(pickingForTool === 'line'){
+    byId('line-coord').value = `${lat.toFixed(6)},${lng.toFixed(6)}`;
+    lineBox.style.display = 'grid';
+    
+    pickingLocation = false;
+    const btn = byId('pick-location-line');
+    btn.style.background = '';
+    btn.style.borderColor = '';
+    btn.title = 'Pick location from map';
+  }
   
-  // Show the draw inputs if hidden
-  drawBox.style.display = 'grid';
-  
-  // Reset pick mode
-  pickingLocation = false;
-  const btn = byId('pick-location');
-  btn.style.background = '';
-  btn.style.borderColor = '';
-  btn.title = 'Pick location from map';
+  pickingForTool = null;
   mapgl.getCanvas().style.cursor = '';
-  
-  // Optional: play click sound
   playClick();
 });
 
@@ -2736,23 +2864,31 @@ mapleaf.on('click', (e)=>{
   
   const {lat, lng} = e.latlng;
   
-  // Fill the coordinate input box
-  byId('draw-coord').value = `${lat.toFixed(6)},${lng.toFixed(6)}`;
+  if(pickingForTool === 'circle'){
+    byId('draw-coord').value = `${lat.toFixed(6)},${lng.toFixed(6)}`;
+    drawBox.style.display = 'grid';
+    
+    pickingLocation = false;
+    const btn = byId('pick-location');
+    btn.style.background = '';
+    btn.style.borderColor = '';
+    btn.title = 'Pick location from map';
+  } else if(pickingForTool === 'line'){
+    byId('line-coord').value = `${lat.toFixed(6)},${lng.toFixed(6)}`;
+    lineBox.style.display = 'grid';
+    
+    pickingLocation = false;
+    const btn = byId('pick-location-line');
+    btn.style.background = '';
+    btn.style.borderColor = '';
+    btn.title = 'Pick location from map';
+  }
   
-  // Show the draw inputs if hidden
-  drawBox.style.display = 'grid';
-  
-  // Reset pick mode
-  pickingLocation = false;
-  const btn = byId('pick-location');
-  btn.style.background = '';
-  btn.style.borderColor = '';
-  btn.title = 'Pick location from map';
+  pickingForTool = null;
   mapleaf.getContainer().style.cursor = '';
-  
-  // Optional: play click sound
   playClick();
 });
+
 /* ===== Sidebar minimize / reopen ===== */
 const appEl=document.getElementById('app'), sidebarEl=document.getElementById('sidebar'), btnHide=document.getElementById('ui-hide'), btnReopen=document.getElementById('ui-reopen');
 function collapseUI(){ appEl.classList.add('ui-collapsed'); document.documentElement.style.setProperty('--side','0px'); }
@@ -2854,12 +2990,24 @@ function openStyleEditor(entry,fid,screenX,screenY){
   if(!editingEnabled) return;
   const f=entry.data.features.find(x=>x.properties.fid===fid); if(!f) return;
   const p=f.properties;
+  const isLine = f.geometry?.type === 'LineString' || f.geometry?.type === 'MultiLineString';
+  
   editCtx = { entry, fid };
 
-  seFill.value = p._fill || '#ffffff';
-  seFillOp.value = (p._fillOpacity ?? 0.2);
-  const strokeOn = (p._strokeOpacity ?? 0.2) > 0 && (p._weight ?? 2) > 0;
-  seOutline.checked = strokeOn;
+  // For lines, hide fill controls
+  if(isLine){
+    seFill.parentElement.style.display = 'none';
+    seFillOp.parentElement.style.display = 'none';
+    seOutline.parentElement.style.display = 'none';
+  } else {
+    seFill.parentElement.style.display = '';
+    seFillOp.parentElement.style.display = '';
+    seOutline.parentElement.style.display = '';
+    seFill.value = p._fill || '#ffffff';
+    seFillOp.value = (p._fillOpacity ?? 0.2);
+    seOutline.checked = (p._strokeOpacity ?? 0.2) > 0 && (p._weight ?? 2) > 0;
+  }
+
   seStroke.value = p._stroke || '#ffffff';
   seWidth.value = p._weight ?? 2;
 
@@ -2870,18 +3018,37 @@ function openStyleEditor(entry,fid,screenX,screenY){
   editorEl.style.display='block';
 }
 function closeStyleEditor(){ editorEl.style.display='none'; editCtx=null; }
+
 function applyEditor(){
   if(!editCtx) return;
   const {entry,fid}=editCtx;
   const f=entry.data.features.find(x=>x.properties.fid===fid); if(!f) return;
   const p=f.properties;
-  p._fill = seFill.value;
-  p._fillOpacity = parseFloat(seFillOp.value);
-  if(seOutline.checked){ p._stroke = seStroke.value; p._weight = parseFloat(seWidth.value)||0; p._strokeOpacity = 0.9; }
-  else { p._strokeOpacity = 0.0; p._weight = 0; }
+  const isLine = f.geometry?.type === 'LineString' || f.geometry?.type === 'MultiLineString';
+  
+  if(!isLine){
+    p._fill = seFill.value;
+    p._fillOpacity = parseFloat(seFillOp.value);
+    if(seOutline.checked){ 
+      p._stroke = seStroke.value; 
+      p._weight = parseFloat(seWidth.value)||0; 
+      p._strokeOpacity = 0.9; 
+    } else { 
+      p._strokeOpacity = 0.0; 
+      p._weight = 0; 
+    }
+  } else {
+    // For lines, only update stroke properties
+    p._stroke = seStroke.value;
+    p._weight = parseFloat(seWidth.value) || 2;
+    p._strokeOpacity = 0.9;
+  }
+  
   p._ts = Date.now();
-  refreshGroupBoth(entry); saveState();
+  refreshGroupBoth(entry); 
+  saveState();
 }
+
 [seFill,seFillOp,seOutline,seStroke,seWidth].forEach(inp=> inp.addEventListener('input', applyEditor));
 seClose.addEventListener('click', closeStyleEditor);
 
@@ -2906,20 +3073,39 @@ seDelete.addEventListener('click', ()=>{
   closeStyleEditor();
 });
 
-const LONGPRESS_MS = 400;
+const LONGPRESS_MS = 450;
 function attachLongPressGL(layerId, /*unused*/ _entry){
   let timer = null;
 
-  function clear(){ if (timer){ clearTimeout(timer); timer = null; } }
+  // Is this one of the line/edge layers?
+  const isLineLayer = /^line-/.test(layerId) || /^polyedge-/.test(layerId);
+
+  function clear(){
+    if (timer){
+      clearTimeout(timer);
+      timer = null;
+    }
+  }
 
   function start(e){
     if (!editingEnabled) return;
 
     timer = setTimeout(() => {
-      const chosen = pickSmallestPolygonAtPoint(e.point);
-      if (!chosen) return;
+      if (!e || !e.point) return;
 
-      // Find the owning entry from the feature's source id
+      let chosen;
+
+      if (isLineLayer) {
+        // For line layers, just pick the feature under the cursor in THIS layer
+        const hits = mapgl.queryRenderedFeatures(e.point, { layers:[layerId] });
+        if (!hits || !hits.length) return;
+        chosen = hits[0];
+      } else {
+        // For fills, keep old behaviour: smallest polygon at that point
+        chosen = pickSmallestPolygonAtPoint(e.point);
+        if (!chosen) return;
+      }
+
       const srcId = chosen.layer && chosen.layer.source;
       const owner = layerList.find(l => l.glSourceId === srcId);
       const fid   = chosen.properties && chosen.properties.fid;
@@ -2932,6 +3118,7 @@ function attachLongPressGL(layerId, /*unused*/ _entry){
   ['mousedown','touchstart'].forEach(ev => mapgl.on(ev, layerId, start));
   ['mouseup','mouseleave','drag','move','touchend','touchcancel'].forEach(ev => mapgl.on(ev, clear));
 }
+
 
 function attachLongPressLeaf(ev, entry, fid){
   if(!editingEnabled) return;
