@@ -24,7 +24,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.5/dist/umd/supabase.min.js"></script>
 
   <!-- OGL (UMD) for Dark Veil -->
-  <script src="https://cdn.jsdelivr.net/npm/ogl@0.0.104/dist/ogl.umd.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/ogl@1.0.6/dist/ogl.umd.js"></script>
 
   <!-- Preload button click sound for instant play -->
   <link rel="preload" href="button.mp3" as="audio" />
@@ -776,6 +776,9 @@ let gh_inFlight = false;
 let gh_queued = null;
 let gh_timer = null;
 
+let gh_retryCount = 0;
+const GH_MAX_RETRIES = 5;
+
 async function gh_flush(projectId) {
   if (!gh_queued || gh_inFlight || !currentRoomCode) return;
   gh_inFlight = true;
@@ -785,19 +788,28 @@ async function gh_flush(projectId) {
   try {
     const { error } = await supabase
       .from('rooms')
-      .update({ 
+      .update({
         geohash_data: { lists: payload.lists, styles: payload.styles },
-        updated_at: new Date().toISOString() 
+        updated_at: new Date().toISOString()
       })
       .eq('code', currentRoomCode);
 
     if (error) {
+      gh_retryCount++;
       console.error('[geohash save] failed:', error);
-      setTimeout(() => { gh_queued = payload; gh_flush(projectId); }, 2000);
+
+      if (gh_retryCount <= GH_MAX_RETRIES) {
+        const delay = 2000 * Math.pow(2, gh_retryCount - 1); // 2s,4s,8s,...
+        setTimeout(() => { gh_queued = payload; gh_flush(projectId); }, delay);
+      } else {
+        console.warn('[geohash save] giving up after too many retries');
+      }
+    } else {
+      gh_retryCount = 0; // reset on success
     }
   } finally {
     gh_inFlight = false;
-    if (gh_queued) gh_flush(projectId);
+    if (gh_queued && gh_retryCount <= GH_MAX_RETRIES) gh_flush(projectId);
   }
 }
 
@@ -3420,7 +3432,7 @@ const syncToServerDebounced = debounce(async function(){
   }finally{
     setTimeout(()=>{ suppressNextRemoteApply=false; }, 250);
   }
-}, 350);
+}, 10000);
 
 function saveState(){ syncToServerDebounced(); }
 
