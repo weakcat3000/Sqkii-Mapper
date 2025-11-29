@@ -278,10 +278,6 @@ a{color:var(--accent)}
   margin-top: 2px;                    /* tiny gap from controls */
 }
 
-
-
-
-
 /* Sonar */
 .sonar-btn{position:fixed;right:16px;bottom:16px;z-index:1500;width:64px;height:64px;border-radius:12px;background:#0e1420;border:1px solid var(--border);box-shadow:0 8px 24px rgba(0,0,0,.35);background-image:url('metal-sonar.png');background-size:contain;background-repeat:no-repeat;background-position:center;cursor:pointer}
 .sheets-btn{position:fixed;left:calc(var(--side) + 16px);bottom:16px;z-index:900;width:56px;height:56px;border-radius:12px;background:#0e1420;border:1px solid var(--border);box-shadow:0 8px 24px rgba(0,0,0,.35);cursor:pointer;display:grid;place-items:center;transition:left .28s ease}
@@ -337,7 +333,6 @@ a{color:var(--accent)}
 #mapgl .maplibregl-ctrl-bottom-left {
   display: none !important;
 }
-
 
   </style>
 </head>
@@ -2689,7 +2684,13 @@ function addCircleToLayer(centerLngLat, radius, color, layerName){
   const hex = (color==='green') ? '#22c55e' : '#ef4444';
   const geom = turf.circle([centerLngLat[0], centerLngLat[1]], radius, {steps:128, units:'meters'}).geometry; 
   const name = `Circle ${radius}m (${(color||'red').toUpperCase()}) @ ${timestampLabel()}`;
-  const props = { fid, name, hidden:false, _gid:fid, _ts:Date.now(), _fill:hex, _fillOpacity:0.18, _stroke:hex, _strokeOpacity:0.9, _weight:2 };
+  const props = { 
+    fid, name, hidden:false, _gid:fid, _ts:Date.now(), 
+    _fill:hex, _fillOpacity:0.18, _stroke:hex, _strokeOpacity:0.9, _weight:2,
+    _circleCenter: centerLngLat,  // Store center for statistics
+    _circleRadius: radius         // Store radius for statistics
+  };
+
   entry.data.features.push({ type:'Feature', geometry:geom, properties:props });
   entry.items = rebuildItemsFromFeatures(entry.data.features);
   refreshGroupBoth(entry);
@@ -2708,7 +2709,28 @@ byId('draw-apply').addEventListener('click', ()=>{
   const m = coord.match(/^\s*([+-]?\d+(\.\d+)?)\s*,\s*([+-]?\d+(\.\d+)?)\s*$/);
   if(!m || !isFinite(radius) || radius<=0){ alert('Please enter "lat,lng" and a positive radius.'); return; }
   const lat = parseFloat(m[1]), lng = parseFloat(m[3]);
-  addCircleToLayer([lng,lat], radius, 'red', 'Circles');
+  
+  // Store circle metadata for statistics
+  const entry = getOrCreateLayerByName('Circles');
+  const fid = String(featureSeq++);
+  const hex = '#ef4444'; // red
+  const centerLngLat = [lng, lat];
+  const geom = turf.circle(centerLngLat, radius, {steps:128, units:'meters'}).geometry;
+  const name = `Circle ${radius}m (RED) @ ${timestampLabel()}`;
+  const props = { 
+    fid, name, hidden:false, _gid:fid, _ts:Date.now(), 
+    _fill:hex, _fillOpacity:0.18, _stroke:hex, _strokeOpacity:0.9, _weight:2,
+    _circleCenter: centerLngLat,  // Store center for statistics
+    _circleRadius: radius         // Store radius for statistics
+  };
+  entry.data.features.push({ type:'Feature', geometry:geom, properties:props });
+  entry.items = rebuildItemsFromFeatures(entry.data.features);
+  refreshGroupBoth(entry);
+  applyVisibility(entry);
+  renderLayers(); renderGroupsVisibility(); saveState();
+  const b = turf.bbox(geom);
+  if(engine==='gl') mapgl.fitBounds([[b[0],b[1]],[b[2],b[3]]],{padding:40,duration:500});
+  else mapleaf.fitBounds([[b[1],b[0]],[b[3],b[2]]],{padding:[40,40]});
 });
 
 /* Draw Line tool */
@@ -2944,6 +2966,10 @@ const seFill=byId('se-fill'), seFillOp=byId('se-fillop'), seOutline=byId('se-out
 let editCtx=null, editingEnabled=false;
 const editToggle = document.getElementById('edit-toggle');
 
+// Add Calculate Statistics button element (will be created dynamically)
+let seCalcStats = null;
+
+
 seDelete.addEventListener('click', ()=>{
   if(!editCtx) return;
   const {entry,fid}=editCtx;
@@ -3003,7 +3029,10 @@ function openStyleEditor(entry,fid,screenX,screenY){
   const f=entry.data.features.find(x=>x.properties.fid===fid); if(!f) return;
   const p=f.properties;
   const isLine = f.geometry?.type === 'LineString' || f.geometry?.type === 'MultiLineString';
-  
+  // Detect circles: either has metadata OR is a polygon (assume it might be a circle)
+  const hasCircleMeta = !!(p._circleCenter && p._circleRadius);
+  const isPolygon = f.geometry?.type === 'Polygon' || f.geometry?.type === 'MultiPolygon';
+  const isCircle = hasCircleMeta || isPolygon; // Show button for all polygons
   editCtx = { entry, fid };
 
   // For lines, hide fill controls
@@ -3023,13 +3052,116 @@ function openStyleEditor(entry,fid,screenX,screenY){
   seStroke.value = p._stroke || '#ffffff';
   seWidth.value = p._weight ?? 2;
 
+  // Add Calculate Statistics button for circles
+  if (isCircle) {
+    // Remove old button if exists
+    if (seCalcStats) {
+      try { seCalcStats.remove(); } catch {}
+    }
+    
+    // Create new Calculate Statistics button
+    seCalcStats = document.createElement('button');
+    seCalcStats.className = 'btn small';
+    seCalcStats.style.cssText = 'width:100%;margin-top:8px;background:rgba(96,165,250,0.15);border-color:#60a5fa;';
+    
+    const hasStats = p._statsCalculated;
+    seCalcStats.textContent = hasStats ? '🔄 Recalculate Statistics' : '📊 Calculate Statistics';
+    seCalcStats.id = 'se-calc-stats';
+    
+    seCalcStats.onclick = () => {
+      // Try to get circle metadata
+      let center = p._circleCenter;
+      let radius = p._circleRadius;
+      
+      // If no metadata, calculate from geometry centroid and approximate radius
+      if (!center || !radius) {
+        try {
+          const centroid = turf.centroid(f);
+          center = centroid.geometry.coordinates;
+          
+          // Approximate radius from bbox
+          const bbox = turf.bbox(f);
+          const dx = bbox[2] - bbox[0];
+          const dy = bbox[3] - bbox[1];
+          radius = Math.max(dx, dy) * 111320 / 2; // rough meters conversion
+          
+          console.log('Estimated circle:', { center, radius });
+        } catch (e) {
+          console.error('Could not estimate circle parameters:', e);
+          alert('Could not determine circle parameters. Please use the Draw Circle tool.');
+          return;
+        }
+      }
+      
+      loadCircleStatistics(fid, center, radius);
+    };
+    
+    // Insert before the actions row
+    const actionsRow = editorEl.querySelector('.style-actions');
+    if (actionsRow) {
+      actionsRow.parentElement.insertBefore(seCalcStats, actionsRow);
+    }
+    
+    // Show cached stats if available
+    if (hasStats) {
+      let statsDiv = document.getElementById('se-stats-display');
+      if (!statsDiv) {
+        statsDiv = document.createElement('div');
+        statsDiv.id = 'se-stats-display';
+        statsDiv.style.cssText = 'margin-top:8px;padding:8px;background:rgba(0,0,0,0.2);border-radius:8px;font-size:12px;';
+        editorEl.querySelector('.style-actions').parentElement.insertBefore(statsDiv, seCalcStats);
+      }
+      const radiusLabel = p._circleRadius
+        ? `${Math.round(p._circleRadius)} m`
+        : 'N/A';
+
+      statsDiv.innerHTML = `
+        <div style="font-weight:800;margin-bottom:4px;color:#60a5fa;">
+          Within this ${radiusLabel} circle, there are:
+        </div>
+        <div style="display:grid;gap:4px;font-size:13px;line-height:1.4;">
+          <div>🏢 HDB Blocks: ${p._hdbCount || 0}</div>
+          <div>➕ AEDs: ${p._aedCount || 0}</div>
+          <div>🚌 Bus Stops: ${p._busCount || 0}</div>
+          <div>🚫 No-entry Signs: ${p._noEntryCount || 0}</div>
+          <div>🐌 Slow Signs: ${p._slowSignCount || 0}</div>
+          <div>🛑 Stop Signs: ${p._stopSignCount || 0}</div>
+        </div>
+      `;
+    }
+  } else {
+    // Remove stats button and display for non-circles
+    if (seCalcStats) {
+      try { seCalcStats.remove(); } catch {}
+      seCalcStats = null;
+    }
+    const statsDiv = document.getElementById('se-stats-display');
+    if (statsDiv) {
+      try { statsDiv.remove(); } catch {}
+    }
+  }
+
   const left = Math.min(screenX+10, window.innerWidth-320);
   const top  = Math.max(10, Math.min(screenY-260, window.innerHeight-260));
   editorEl.style.left = left+'px';
   editorEl.style.top  = top+'px';
   editorEl.style.display='block';
 }
-function closeStyleEditor(){ editorEl.style.display='none'; editCtx=null; }
+
+function closeStyleEditor(){ 
+  editorEl.style.display='none'; 
+  editCtx=null; 
+  
+  // Clean up stats button and display
+  if (seCalcStats) {
+    try { seCalcStats.remove(); } catch {}
+    seCalcStats = null;
+  }
+  const statsDiv = document.getElementById('se-stats-display');
+  if (statsDiv) {
+    try { statsDiv.remove(); } catch {}
+  }
+}
 
 function applyEditor(){
   if(!editCtx) return;
@@ -3857,7 +3989,13 @@ function addSonarCircle(centerLngLat, radius, color){
   const hex = (color==='green') ? '#22c55e' : '#ef4444';
   const geom = turf.circle([centerLngLat[0], centerLngLat[1]], radius, {steps:128, units:'meters'}).geometry; 
   const name = `Sonar ${radius}m (${color.toUpperCase()}) @ ${timestampLabel()}`;
-  const props = { fid, name, hidden:false, _gid:fid, _ts:Date.now(), _fill:hex, _fillOpacity:0.18, _stroke:hex, _strokeOpacity:0.9, _weight:2 };
+  const props = { 
+    fid, name, hidden:false, _gid:fid, _ts:Date.now(), 
+    _fill:hex, _fillOpacity:0.18, _stroke:hex, _strokeOpacity:0.9, _weight:2,
+    _circleCenter: centerLngLat,  // Store center for statistics
+    _circleRadius: radius         // Store radius for statistics
+  };
+
   entry.data.features.push({ type:'Feature', geometry:geom, properties:props });
   entry.items = rebuildItemsFromFeatures(entry.data.features);
   refreshGroupBoth(entry);
@@ -4084,9 +4222,436 @@ function downloadBlob(name, blob){ const url=URL.createObjectURL(blob); const a=
 byId('export-kml').onclick=()=>{ const kml=exportKMLString(); downloadBlob('sqkii-export.kml', new Blob([kml],{type:'application/vnd.google-earth.kml+xml'})); };
 byId('export-kmz').onclick=async()=>{ const zip=new JSZip(); const kml=exportKMLString(); zip.file('doc.kml', kml); const blob=await zip.generateAsync({type:'blob'}); downloadBlob('sqkii-export.kmz', blob); };
 
+
+/* ================= Circle Statistics Helper Functions ================= */
+
+function getGeometryPoint(geometry) {
+  if (!geometry) return null;
+
+  try {
+    if (geometry.type === 'Point') {
+      // [lng, lat]
+      return turf.point(geometry.coordinates);
+    }
+
+    if (geometry.type === 'Polygon') {
+      const poly = turf.polygon(geometry.coordinates);
+      return turf.centroid(poly); // representative point
+    }
+
+    if (geometry.type === 'MultiPolygon') {
+      const mpoly = turf.multiPolygon(geometry.coordinates);
+      return turf.centroid(mpoly);
+    }
+
+    // You can add more geometry types here if needed
+  } catch (e) {
+    console.warn('⚠️ Failed to build point from geometry', geometry, e);
+  }
+
+  return null;
+}
+
+function countFeaturesInCircle(featureCollection, circlePolygon) {
+  if (!featureCollection || !Array.isArray(featureCollection.features)) return 0;
+
+  let count = 0;
+
+  for (const f of featureCollection.features) {
+    const pt = getGeometryPoint(f.geometry);
+    if (!pt) continue;
+
+    if (turf.booleanPointInPolygon(pt, circlePolygon)) {
+      count++;
+    }
+  }
+
+  return count;
+}
+
+function extractFidFromPopupContent(content) {
+  const match = content.match(/circle-stats-(\S+)/);
+  return match ? match[1] : null;
+}
+
+function findFeatureByFid(fid) {
+  for (const entry of layerList) {
+    const feature = (entry.data?.features || []).find(f => String(f.properties?.fid) === String(fid));
+    if (feature) return feature;
+  }
+  return null;
+}
+
+// Fetch a GeoJSON FeatureCollection from data.gov.sg "poll-download" API
+async function fetchDataGovGeoJson(datasetId) {
+  const pollUrl = `https://api-open.data.gov.sg/v1/public/api/datasets/${datasetId}/poll-download`;
+
+  console.log('🌐 Polling data.gov.sg for dataset', datasetId, pollUrl);
+
+  const pollResp = await fetch(
+    `https://corsproxy.io/?${encodeURIComponent(pollUrl)}`
+  );
+  console.log('📥 poll-download status:', pollResp.status);
+
+  const pollJson = await pollResp.json();
+  console.log('📊 poll-download payload:', pollJson);
+
+  // Basic sanity check
+  if (!pollJson || pollJson.code !== 0 || !pollJson.data || !pollJson.data.url) {
+    console.warn('⚠️ Unexpected poll-download response for', datasetId, pollJson);
+    return null;
+  }
+
+  const downloadUrl = pollJson.data.url;
+  console.log('⬇️ Downloading actual data file:', downloadUrl);
+
+  const dataResp = await fetch(
+    `https://corsproxy.io/?${encodeURIComponent(downloadUrl)}`
+  );
+  console.log('📥 data file status:', dataResp.status);
+
+  const geojson = await dataResp.json();
+  console.log('📦 Parsed data file:', geojson);
+
+  if (geojson.type !== 'FeatureCollection' || !Array.isArray(geojson.features)) {
+    console.warn('⚠️ Expected GeoJSON FeatureCollection for', datasetId, geojson);
+    return null;
+  }
+
+  return geojson;
+}
+
+
+
+
+async function loadCircleStatistics(fid, center, radiusMeters) {
+  console.log('🔍 Starting statistics calculation...', { fid, center, radiusMeters });
+
+  const editorBtn = document.getElementById('se-calc-stats');
+  if (editorBtn) {
+    editorBtn.disabled = true;
+    editorBtn.textContent = '⏳ Calculating...';
+  }
+
+  const feature = findFeatureByFid(fid);
+  if (!feature) {
+    console.error('❌ Feature not found for statistics:', fid);
+    if (editorBtn) {
+      editorBtn.disabled = false;
+      editorBtn.textContent = '❌ Retry Calculate';
+    }
+    return;
+  }
+
+  try {
+    // Build Turf.js circle polygon in meters
+    const circlePolygon = turf.circle(center, radiusMeters, {
+      steps: 64,
+      units: 'meters'
+    });
+    console.log('✅ Circle polygon created for stats');
+
+    // --- counters ---
+    let hdbCount = 0;
+    let aedCount = 0;
+    let busStopCount = 0;
+    let noEntryCount = 0;
+    let slowSignCount = 0;
+    let stopSignCount = 0;
+
+    // Dataset IDs on data.gov.sg (GeoJSON via poll-download)
+    const HDB_DATASET_ID = 'd_16b157c52ed637edd6ba1232e026258d';  // HDB Existing Building
+    const AED_DATASET_ID = 'd_4e6b82c58a8a832f6f1fee5dfa6d47ea';  // Public Access AEDs
+    const BUS_DATASET_ID = 'd_3f172c6feb3f4f92a2f47d93eed2908a';  // LTA Bus Stops
+    const TRAFFIC_DATASET_ID = 'd_bbf0132c7290d6838f82003972d933d5'; // LTA Traffic Sign
+
+    // Helper: poll-download then fetch the actual GeoJSON
+    async function fetchDataGovGeoJson(datasetId, label) {
+      const pollUrl = `https://api-open.data.gov.sg/v1/public/api/datasets/${datasetId}/poll-download`;
+
+      try {
+        console.log(`📡 [${label}] poll-download:`, pollUrl);
+        const pollResp = await fetch(`https://corsproxy.io/?${encodeURIComponent(pollUrl)}`);
+        console.log(`📥 [${label}] poll status:`, pollResp.status);
+        const pollJson = await pollResp.json();
+        console.log(`📊 [${label}] poll json:`, pollJson);
+
+        // Some datasets might return GeoJSON directly
+        if (pollJson && pollJson.type === 'FeatureCollection' && Array.isArray(pollJson.features)) {
+          return pollJson;
+        }
+
+        if (!pollJson || pollJson.code !== 0 || !pollJson.data || !pollJson.data.url) {
+          console.warn(`⚠️ [${label}] unexpected poll-download response`, pollJson);
+          return null;
+        }
+
+        const dataUrl = pollJson.data.url;
+        console.log(`⬇️ [${label}] downloading data file:`, dataUrl);
+        const dataResp = await fetch(`https://corsproxy.io/?${encodeURIComponent(dataUrl)}`);
+        console.log(`📥 [${label}] data status:`, dataResp.status);
+        const dataJson = await dataResp.json();
+        console.log(`📦 [${label}] data json:`, dataJson);
+
+        if (!dataJson || dataJson.type !== 'FeatureCollection' || !Array.isArray(dataJson.features)) {
+          console.warn(`⚠️ [${label}] data is not a FeatureCollection`, dataJson);
+          return null;
+        }
+
+        return dataJson;
+      } catch (e) {
+        console.error(`❌ [${label}] fetch failed`, e);
+        return null;
+      }
+    }
+
+    // Simple in-memory cache stored on window/globalThis so subsequent calls reuse downloads
+    const w = (typeof window !== 'undefined') ? window : globalThis;
+
+    if (!w.__HDB_CACHE_PROMISE) {
+      w.__HDB_CACHE_PROMISE = fetchDataGovGeoJson(HDB_DATASET_ID, 'HDB');
+    }
+    if (!w.__AED_CACHE_PROMISE) {
+      w.__AED_CACHE_PROMISE = fetchDataGovGeoJson(AED_DATASET_ID, 'AED');
+    }
+    if (!w.__BUS_CACHE_PROMISE) {
+      w.__BUS_CACHE_PROMISE = fetchDataGovGeoJson(BUS_DATASET_ID, 'Bus Stop');
+    }
+    if (!w.__TRAFFIC_SIGN_CACHE_PROMISE) {
+      w.__TRAFFIC_SIGN_CACHE_PROMISE = fetchDataGovGeoJson(TRAFFIC_DATASET_ID, 'Traffic Sign');
+    }
+
+    const [hdbData, aedData, busData, trafficData] = await Promise.all([
+      w.__HDB_CACHE_PROMISE,
+      w.__AED_CACHE_PROMISE,
+      w.__BUS_CACHE_PROMISE,
+      w.__TRAFFIC_SIGN_CACHE_PROMISE
+    ]);
+
+    // ---- HDB Blocks: count if point is inside OR footprint intersects/touches circle ----
+    if (hdbData && Array.isArray(hdbData.features)) {
+      for (const f of hdbData.features) {
+        const geom = f.geometry;
+        if (!geom) continue;
+
+        try {
+          if (geom.type === 'Point') {
+            const coords = geom.coordinates || [];
+            const lng = parseFloat(coords[0]);
+            const lat = parseFloat(coords[1]);
+            if (!Number.isNaN(lng) && !Number.isNaN(lat)) {
+              const pt = turf.point([lng, lat]);
+              if (turf.booleanPointInPolygon(pt, circlePolygon)) {
+                hdbCount++;
+              }
+            }
+          } else if (geom.type === 'Polygon' || geom.type === 'MultiPolygon') {
+            const buildingGeom = geom.type === 'Polygon'
+              ? turf.polygon(geom.coordinates)
+              : turf.multiPolygon(geom.coordinates);
+
+            // ✅ counts if the building footprint and circle share any point (even just touching)
+            if (turf.booleanIntersects(buildingGeom, circlePolygon)) {
+              hdbCount++;
+            }
+          }
+        } catch (e) {
+          console.warn('⚠️ Error handling HDB feature geometry', e, f);
+        }
+      }
+    } else {
+      console.warn('⚠️ HDB dataset missing or invalid', hdbData);
+    }
+
+    console.log('🏢 HDB Blocks inside/touching circle:', hdbCount);
+
+    // ---- AEDs ----
+    if (aedData && Array.isArray(aedData.features)) {
+      for (const f of aedData.features) {
+        const geom = f.geometry;
+        if (!geom) continue;
+
+        try {
+          if (geom.type === 'Point') {
+            const coords = geom.coordinates || [];
+            const lng = parseFloat(coords[0]);
+            const lat = parseFloat(coords[1]);
+            if (!Number.isNaN(lng) && !Number.isNaN(lat)) {
+              const pt = turf.point([lng, lat]);
+              if (turf.booleanPointInPolygon(pt, circlePolygon)) {
+                aedCount++;
+              }
+            }
+          } else if (geom.type === 'Polygon' || geom.type === 'MultiPolygon') {
+            const aedGeom = geom.type === 'Polygon'
+              ? turf.polygon(geom.coordinates)
+              : turf.multiPolygon(geom.coordinates);
+
+            if (turf.booleanIntersects(aedGeom, circlePolygon)) {
+              aedCount++;
+            }
+          }
+        } catch (e) {
+          console.warn('⚠️ Error handling AED feature geometry', e, f);
+        }
+      }
+    } else {
+      console.warn('⚠️ AED dataset missing or invalid', aedData);
+    }
+
+    console.log('➕ AEDs inside/touching circle:', aedCount);
+
+    // ---- Bus Stops ----
+    if (busData && Array.isArray(busData.features)) {
+      for (const f of busData.features) {
+        const geom = f.geometry;
+        if (!geom) continue;
+
+        try {
+          if (geom.type === 'Point') {
+            const coords = geom.coordinates || [];
+            const lng = parseFloat(coords[0]);
+            const lat = parseFloat(coords[1]);
+            if (!Number.isNaN(lng) && !Number.isNaN(lat)) {
+              const pt = turf.point([lng, lat]);
+              if (turf.booleanPointInPolygon(pt, circlePolygon)) {
+                busStopCount++;
+              }
+            }
+          } else if (geom.type === 'Polygon' || geom.type === 'MultiPolygon') {
+            const busGeom = geom.type === 'Polygon'
+              ? turf.polygon(geom.coordinates)
+              : turf.multiPolygon(geom.coordinates);
+
+            if (turf.booleanIntersects(busGeom, circlePolygon)) {
+              busStopCount++;
+            }
+          }
+        } catch (e) {
+          console.warn('⚠️ Error handling Bus Stop feature geometry', e, f);
+        }
+      }
+    } else {
+      console.warn('⚠️ Bus Stop dataset missing or invalid', busData);
+    }
+
+    console.log('🚌 Bus Stops inside/touching circle:', busStopCount);
+
+    // ---- Traffic Signs (no-entry, slow, stop) ----
+    if (trafficData && Array.isArray(trafficData.features)) {
+      for (const f of trafficData.features) {
+        const geom = f.geometry;
+        if (!geom) continue;
+
+        try {
+          if (geom.type !== 'Point') {
+            // dataset is point-based; ignore weird geometries
+            continue;
+          }
+
+          const coords = geom.coordinates || [];
+          const lng = parseFloat(coords[0]);
+          const lat = parseFloat(coords[1]);
+          if (Number.isNaN(lng) || Number.isNaN(lat)) continue;
+
+          const pt = turf.point([lng, lat]);
+          if (!turf.booleanPointInPolygon(pt, circlePolygon)) {
+            // sign is outside the circle → skip parsing Description
+            continue;
+          }
+
+          const desc = (f.properties && f.properties.Description) || '';
+          // Extract the TYP_CD value from the HTML table inside Description
+          const match = desc.match(/<th>\s*TYP_CD\s*<\/th>\s*<td>(.*?)<\/td>/i);
+          const typCdRaw = match ? match[1] : '';
+          const typCd = typCdRaw.replace(/<[^>]+>/g, '').toUpperCase(); // strip any stray tags, uppercase
+
+          if (!typCd) continue;
+
+          if (typCd.includes('NO ENTRY')) {
+            noEntryCount++;
+          } else if (typCd.includes('SLOW')) {
+            slowSignCount++;
+          } else if (typCd.includes('STOP')) {
+            stopSignCount++;
+          }
+        } catch (e) {
+          console.warn('⚠️ Error handling Traffic Sign feature', e, f);
+        }
+      }
+    } else {
+      console.warn('⚠️ Traffic Sign dataset missing or invalid', trafficData);
+    }
+
+    console.log('🚫 No-entry signs:', noEntryCount);
+    console.log('🐌 Slow signs:', slowSignCount);
+    console.log('🛑 Stop signs:', stopSignCount);
+
+    // ---- Store results on the feature ----
+    feature.properties = feature.properties || {};
+    feature.properties._statsCalculated = true;
+    feature.properties._hdbCount = hdbCount;
+    feature.properties._aedCount = aedCount;
+    feature.properties._busCount = busStopCount;
+    feature.properties._noEntryCount = noEntryCount;
+    feature.properties._slowSignCount = slowSignCount;
+    feature.properties._stopSignCount = stopSignCount;
+    feature.properties._circleCenter = center;
+    feature.properties._circleRadius = radiusMeters;
+    feature.properties._ts = Date.now();
+
+    // Persist to Supabase / local storage via existing helper
+    if (typeof saveState === 'function') {
+      saveState();
+    }
+
+    // ---- Update the style editor UI, if it's open ----
+    if (editorBtn) {
+      editorBtn.disabled = false;
+      editorBtn.textContent = '🔄 Recalculate Statistics';
+
+      let statsDiv = document.getElementById('se-stats-display');
+      if (!statsDiv) {
+        // If the style editor hasn't created it yet, attach it above the button
+        statsDiv = document.createElement('div');
+        statsDiv.id = 'se-stats-display';
+        statsDiv.style.cssText =
+          'margin-top:8px;padding:8px;background:rgba(0,0,0,0.2);border-radius:8px;font-size:12px;';
+        editorBtn.parentElement.insertBefore(statsDiv, editorBtn);
+      }
+
+      const radiusLabel = `${Math.round(radiusMeters)}m`;
+
+      statsDiv.innerHTML = `
+        <div style="font-weight:700;margin-bottom:4px;color:#60a5fa;">Circle Statistics:</div>
+        <div style="display:grid;gap:4px;font-size:11px;">
+          <div>🏢 HDB Blocks: ${hdbCount}</div>
+          <div>➕ AEDs: ${aedCount}</div>
+          <div>🚌 Bus Stops: ${busStopCount}</div>
+          <div>🚫 No-entry Signs: ${noEntryCount}</div>
+          <div>🐌 Slow Signs: ${slowSignCount}</div>
+          <div>🛑 Stop Signs: ${stopSignCount}</div>
+          <div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);">
+            📏 Radius: ${radiusLabel}
+          </div>
+        </div>
+      `;
+    }
+
+  } catch (error) {
+    console.error('❌ Failed to load statistics:', error);
+    if (editorBtn) {
+      editorBtn.disabled = false;
+      editorBtn.textContent = '❌ Retry Calculate';
+    }
+  }
+}
+
+
+
 /* ===== Dark Veil — pure WebGL (brighter & obvious purple) ===== */
 /* ===== EDITABLE KNOBS (Ultra-Blended) ===== */
-const SPEED=0.2,ANGLE_SPEED=0.12,BRIGHTNESS=1.06,RES_SCALE=1.0;
+const SPEED=0.25,ANGLE_SPEED=0.12,BRIGHTNESS=1.10,RES_SCALE=1.0;
 const BASE_PURPLE=[0.50,0.32,0.96],ACC_LIGHT=[0.98,0.78,1.00],ACC_DARK=[0.36,0.08,0.60];
 const STR1=0.55,WIDTH1=0.82,FREQ1=4.0,OFF1=0.05;  // light accent
 const STR2=0.45,WIDTH2=0.80,FREQ2=5.2,OFF2=0.24;  // dark accent
