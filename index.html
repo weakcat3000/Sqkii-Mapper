@@ -113,12 +113,31 @@ a{color:var(--accent)}
 .maplibregl-popup-close-button:hover,.leaflet-popup-close-button:hover{filter:brightness(1.15)}
 
 /* Style editor modal */
-.style-editor{position:fixed;z-index:1200;display:none;min-width:240px;max-width:280px;background:#0f1115;color:#e5e7eb;border:1px solid #1f2430;border-radius:12px;padding:12px;box-shadow:0 12px 32px rgba(0,0,0,.45)}
+.style-editor{position:fixed;z-index:1300;display:none;min-width:250px;max-width:300px;background:#0f1115;color:#e5e7eb;border:1px solid #1f2430;border-radius:13px;padding:13px;box-shadow:0 12px 32px rgba(0,0,0,.45)}
 .style-editor h4{margin:0 0 8px 0;font-size:14px}
 .style-row{display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:center;margin:8px 0}
 .style-row input[type="color"],.style-row input[type="number"],.style-row input[type="range"]{width:100%;background:#12151b;border:1px solid #1f2430;color:#e5e7eb;border-radius:8px;padding:6px 8px}
 .style-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:6px}
 .style-actions .btn{padding:6px 10px}
+.style-editor-x {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: #e5e7eb;
+  font-size: 18px;
+  cursor: pointer;
+}
+/* Keep the opacity slider from overflowing */
+#style-editor input[type="range"] {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0;          /* optional, keeps it nicely aligned */
+}
 
 /* Map style row */
 .mapstyle-row{position:relative;z-index:1;padding:12px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:1fr auto;gap:14px;align-items:start}
@@ -442,6 +461,9 @@ a{color:var(--accent)}
 
   <!-- Long-press style editor -->
   <div id="style-editor" class="style-editor">
+    <!-- New top-right X button -->
+    <button id="se-close-top" class="style-editor-x" aria-label="Close editor">×</button>
+
     <h4>Edit shape style</h4>
     <div class="style-row"><label>Fill</label><input id="se-fill" type="color" value="#ffffff"></div>
     <div class="style-row"><label>Opacity</label><input id="se-fillop" type="range" min="0" max="1" step="0.05" value="0.2"></div>
@@ -453,6 +475,7 @@ a{color:var(--accent)}
       <button class="btn small" id="se-close">Close</button>
     </div>
   </div>
+
 </div>
 
 <!-- Add the loading container above the joining box -->
@@ -2961,8 +2984,16 @@ const PRELOAD_GEOHASHES = 'geohashesGold.kmz';
 const PRELOAD_COINS = ['All Coin Records 2023-2024.kmz','All Coins Record 2023-2024.kmz','All Coins Records 2023-2024.kmz'];
 
 /* ===== Long-press style editor (Edit Mode) ===== */
-const editorEl=byId('style-editor');
-const seFill=byId('se-fill'), seFillOp=byId('se-fillop'), seOutline=byId('se-outline'), seStroke=byId('se-stroke'), seWidth=byId('se-width'), seClose=byId('se-close'), seDelete=byId('se-delete');
+const editorEl = byId('style-editor');
+const seFill   = byId('se-fill'),
+      seFillOp = byId('se-fillop'),
+      seOutline= byId('se-outline'),
+      seStroke = byId('se-stroke'),
+      seWidth  = byId('se-width'),
+      seClose  = byId('se-close'),
+      seDelete = byId('se-delete'),
+      seCloseTop = byId('se-close-top');   
+
 let editCtx=null, editingEnabled=false;
 const editToggle = document.getElementById('edit-toggle');
 
@@ -3141,12 +3172,43 @@ function openStyleEditor(entry,fid,screenX,screenY){
     }
   }
 
-  const left = Math.min(screenX+10, window.innerWidth-320);
-  const top  = Math.max(10, Math.min(screenY-260, window.innerHeight-260));
+// Smart positioning: measure actual editor height and position to keep it fully visible
+  editorEl.style.display='block';
+  editorEl.style.visibility='hidden'; // measure without showing
+  
+  // Force a reflow to get accurate measurements
+  const editorHeight = editorEl.offsetHeight;
+  const editorWidth = editorEl.offsetWidth || 320;
+  
+  // Calculate position that keeps editor fully on screen
+  let left = screenX + 10;
+  let top = screenY - 10;
+  
+  // Prevent going off right edge
+  if (left + editorWidth > window.innerWidth) {
+    left = window.innerWidth - editorWidth - 10;
+  }
+  
+  // Prevent going off left edge
+  if (left < 10) {
+    left = 10;
+  }
+  
+  // Prevent going off bottom edge - this is the key fix
+  if (top + editorHeight > window.innerHeight) {
+    top = window.innerHeight - editorHeight - 10;
+  }
+  
+  // Prevent going off top edge
+  if (top < 10) {
+    top = 10;
+  }
+  
   editorEl.style.left = left+'px';
   editorEl.style.top  = top+'px';
-  editorEl.style.display='block';
+  editorEl.style.visibility='visible'; // now show it
 }
+
 
 function closeStyleEditor(){ 
   editorEl.style.display='none'; 
@@ -3195,6 +3257,10 @@ function applyEditor(){
 
 [seFill,seFillOp,seOutline,seStroke,seWidth].forEach(inp=> inp.addEventListener('input', applyEditor));
 seClose.addEventListener('click', closeStyleEditor);
+if (seCloseTop) {
+  seCloseTop.addEventListener('click', closeStyleEditor);
+}
+
 
 seDelete.addEventListener('click', ()=>{
   if(!editCtx) return;
@@ -3778,7 +3844,7 @@ serverJoin.addEventListener('click', async () => {
 let audioEnabled = true;
 
 // === BGM setup ===
-const BGM_CAP = 0.05;
+const BGM_CAP = 0.10;
 let userBgmSetting = 1;
 const bgmTargetVolume = () => BGM_CAP * userBgmSetting;
 
@@ -4651,7 +4717,7 @@ async function loadCircleStatistics(fid, center, radiusMeters) {
 
 /* ===== Dark Veil — pure WebGL (brighter & obvious purple) ===== */
 /* ===== EDITABLE KNOBS (Ultra-Blended) ===== */
-const SPEED=0.25,ANGLE_SPEED=0.12,BRIGHTNESS=1.10,RES_SCALE=1.0;
+const SPEED=0.25,ANGLE_SPEED=0.12,BRIGHTNESS=1.50,RES_SCALE=1.0;
 const BASE_PURPLE=[0.50,0.32,0.96],ACC_LIGHT=[0.98,0.78,1.00],ACC_DARK=[0.36,0.08,0.60];
 const STR1=0.55,WIDTH1=0.82,FREQ1=4.0,OFF1=0.05;  // light accent
 const STR2=0.45,WIDTH2=0.80,FREQ2=5.2,OFF2=0.24;  // dark accent
