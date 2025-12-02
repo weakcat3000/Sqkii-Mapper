@@ -4626,13 +4626,18 @@ async function loadCircleStatistics(fid, center, radiusMeters) {
             continue;
           }
 
-          const desc = (f.properties && f.properties.Description) || '';
-          // Extract the TYP_CD value from the HTML table inside Description
-          const match = desc.match(/<th>\s*TYP_CD\s*<\/th>\s*<td>(.*?)<\/td>/i);
-          const typCdRaw = match ? match[1] : '';
-          const typCd = typCdRaw.replace(/<[^>]+>/g, '').toUpperCase(); // strip any stray tags, uppercase
+          // New schema: TYP_CD is a direct property
+          let typCdRaw = (f.properties && f.properties.TYP_CD) || '';
 
+          // Fallback to old schema, just in case you ever load an old file:
+          if (!typCdRaw && f.properties && f.properties.Description) {
+            const match = f.properties.Description.match(/<th>\s*TYP_CD\s*<\/th>\s*<td>(.*?)<\/td>/i);
+            typCdRaw = match ? match[1] : '';
+          }
+
+          const typCd = String(typCdRaw).toUpperCase();
           if (!typCd) continue;
+
 
           if (typCd.includes('NO ENTRY')) {
             noEntryCount++;
@@ -4717,7 +4722,7 @@ async function loadCircleStatistics(fid, center, radiusMeters) {
 
 /* ===== Dark Veil — pure WebGL (brighter & obvious purple) ===== */
 /* ===== EDITABLE KNOBS (Ultra-Blended) ===== */
-const SPEED=0.25,ANGLE_SPEED=0.12,BRIGHTNESS=1.50,RES_SCALE=1.0;
+const SPEED=0.25,ANGLE_SPEED=0.12,BRIGHTNESS=1.10,RES_SCALE=1.0;
 const BASE_PURPLE=[0.50,0.32,0.96],ACC_LIGHT=[0.98,0.78,1.00],ACC_DARK=[0.36,0.08,0.60];
 const STR1=0.55,WIDTH1=0.82,FREQ1=4.0,OFF1=0.05;  // light accent
 const STR2=0.45,WIDTH2=0.80,FREQ2=5.2,OFF2=0.24;  // dark accent
