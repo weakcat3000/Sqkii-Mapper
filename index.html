@@ -2997,8 +2997,10 @@ const seFill   = byId('se-fill'),
 let editCtx=null, editingEnabled=false;
 const editToggle = document.getElementById('edit-toggle');
 
-// Add Calculate Statistics button element (will be created dynamically)
+// Add Calculate Statistics/Glimpse button element (will be created dynamically)
 let seCalcStats = null;
+let seGlimpseSigns = null;
+
 
 
 seDelete.addEventListener('click', ()=>{
@@ -3083,94 +3085,139 @@ function openStyleEditor(entry,fid,screenX,screenY){
   seStroke.value = p._stroke || '#ffffff';
   seWidth.value = p._weight ?? 2;
 
-  // Add Calculate Statistics button for circles
-  if (isCircle) {
-    // Remove old button if exists
-    if (seCalcStats) {
-      try { seCalcStats.remove(); } catch {}
-    }
-    
-    // Create new Calculate Statistics button
-    seCalcStats = document.createElement('button');
-    seCalcStats.className = 'btn small';
-    seCalcStats.style.cssText = 'width:100%;margin-top:8px;background:rgba(96,165,250,0.15);border-color:#60a5fa;';
-    
-    const hasStats = p._statsCalculated;
-    seCalcStats.textContent = hasStats ? '🔄 Recalculate Statistics' : '📊 Calculate Statistics';
-    seCalcStats.id = 'se-calc-stats';
-    
-    seCalcStats.onclick = () => {
-      // Try to get circle metadata
-      let center = p._circleCenter;
-      let radius = p._circleRadius;
-      
-      // If no metadata, calculate from geometry centroid and approximate radius
-      if (!center || !radius) {
-        try {
-          const centroid = turf.centroid(f);
-          center = centroid.geometry.coordinates;
-          
-          // Approximate radius from bbox
-          const bbox = turf.bbox(f);
-          const dx = bbox[2] - bbox[0];
-          const dy = bbox[3] - bbox[1];
-          radius = Math.max(dx, dy) * 111320 / 2; // rough meters conversion
-          
-          console.log('Estimated circle:', { center, radius });
-        } catch (e) {
-          console.error('Could not estimate circle parameters:', e);
-          alert('Could not determine circle parameters. Please use the Draw Circle tool.');
-          return;
-        }
-      }
-      
-      loadCircleStatistics(fid, center, radius);
-    };
-    
-    // Insert before the actions row
-    const actionsRow = editorEl.querySelector('.style-actions');
-    if (actionsRow) {
-      actionsRow.parentElement.insertBefore(seCalcStats, actionsRow);
-    }
-    
-    // Show cached stats if available
-    if (hasStats) {
-      let statsDiv = document.getElementById('se-stats-display');
-      if (!statsDiv) {
-        statsDiv = document.createElement('div');
-        statsDiv.id = 'se-stats-display';
-        statsDiv.style.cssText = 'margin-top:8px;padding:8px;background:rgba(0,0,0,0.2);border-radius:8px;font-size:12px;';
-        editorEl.querySelector('.style-actions').parentElement.insertBefore(statsDiv, seCalcStats);
-      }
-      const radiusLabel = p._circleRadius
-        ? `${Math.round(p._circleRadius)} m`
-        : 'N/A';
-
-      statsDiv.innerHTML = `
-        <div style="font-weight:800;margin-bottom:4px;color:#60a5fa;">
-          Within this ${radiusLabel} circle, there are:
-        </div>
-        <div style="display:grid;gap:4px;font-size:13px;line-height:1.4;">
-          <div>🏢 HDB Blocks: ${p._hdbCount || 0}</div>
-          <div>➕ AEDs: ${p._aedCount || 0}</div>
-          <div>🚌 Bus Stops: ${p._busCount || 0}</div>
-          <div>🚫 No-entry Signs: ${p._noEntryCount || 0}</div>
-          <div>🐌 Slow Signs: ${p._slowSignCount || 0}</div>
-          <div>🛑 Stop Signs: ${p._stopSignCount || 0}</div>
-        </div>
-      `;
-    }
-  } else {
-    // Remove stats button and display for non-circles
-    if (seCalcStats) {
-      try { seCalcStats.remove(); } catch {}
-      seCalcStats = null;
-    }
-    const statsDiv = document.getElementById('se-stats-display');
-    if (statsDiv) {
-      try { statsDiv.remove(); } catch {}
-    }
+// Add Calculate Statistics + Glimpse buttons for circles
+if (isCircle) {
+  // Remove old buttons if they exist
+  if (seCalcStats) {
+    try { seCalcStats.remove(); } catch {}
+    seCalcStats = null;
   }
+  if (seGlimpseSigns) {
+    try { seGlimpseSigns.remove(); } catch {}
+    seGlimpseSigns = null;
+  }
+  
+  // Create new Calculate Statistics button
+  seCalcStats = document.createElement('button');
+  seCalcStats.className = 'btn small';
+  seCalcStats.style.cssText = 'width:100%;margin-top:8px;background:rgba(96,165,250,0.15);border-color:#60a5fa;';
+  
+  const hasStats = p._statsCalculated;
+  seCalcStats.textContent = hasStats ? '🔄 Recalculate Statistics' : '📊 Calculate Statistics';
+  seCalcStats.id = 'se-calc-stats';
+  
+  seCalcStats.onclick = () => {
+    // Try to get circle metadata
+    let center = p._circleCenter;
+    let radius = p._circleRadius;
+    
+    // If no metadata, calculate from geometry centroid and approximate radius
+    if (!center || !radius) {
+      try {
+        const centroid = turf.centroid(f);
+        center = centroid.geometry.coordinates;
+        
+        // Approximate radius from bbox
+        const bbox = turf.bbox(f);
+        const dx = bbox[2] - bbox[0];
+        const dy = bbox[3] - bbox[1];
+        radius = Math.max(dx, dy) * 111320 / 2; // rough meters conversion
+        
+        console.log('Estimated circle:', { center, radius });
+      } catch (e) {
+        console.error('Could not estimate circle parameters:', e);
+        alert('Could not determine circle parameters. Please use the Draw Circle tool.');
+        return;
+      }
+    }
+    
+    loadCircleStatistics(fid, center, radius);
+  };
+
+  // Create Glimpse Signs button
+  seGlimpseSigns = document.createElement('button');
+  seGlimpseSigns.className = 'btn small';
+  seGlimpseSigns.style.cssText = 'width:100%;margin-top:4px;background:rgba(250,204,21,0.15);border-color:#facc15;';
+  seGlimpseSigns.textContent = '👁️ Glimpse Signs';
+
+  seGlimpseSigns.onclick = async () => {
+    // Same center/radius logic as stats
+    let center = p._circleCenter;
+    let radius = p._circleRadius;
+
+    if (!center || !radius) {
+      try {
+        const centroid = turf.centroid(f);
+        center = centroid.geometry.coordinates;
+        
+        const bbox = turf.bbox(f);
+        const dx = bbox[2] - bbox[0];
+        const dy = bbox[3] - bbox[1];
+        radius = Math.max(dx, dy) * 111320 / 2;
+        
+        console.log('Estimated circle for Glimpse:', { center, radius });
+      } catch (e) {
+        console.error('Could not estimate circle parameters for Glimpse:', e);
+        alert('Could not determine circle parameters. Please use the Draw Circle tool.');
+        return;
+      }
+    }
+
+    await glimpseTrafficSigns(fid, center, radius);
+  };
+  
+  // Insert both buttons before the actions row
+  const actionsRow = editorEl.querySelector('.style-actions');
+  if (actionsRow) {
+    const parent = actionsRow.parentElement;
+    // Order: Calculate → Glimpse → actions
+    parent.insertBefore(seCalcStats, actionsRow);
+    parent.insertBefore(seGlimpseSigns, actionsRow);
+  }
+  
+  // Show cached stats if available
+  if (hasStats) {
+    let statsDiv = document.getElementById('se-stats-display');
+    if (!statsDiv) {
+      statsDiv = document.createElement('div');
+      statsDiv.id = 'se-stats-display';
+      statsDiv.style.cssText = 'margin-top:8px;padding:8px;background:rgba(0,0,0,0.2);border-radius:8px;font-size:12px;';
+      editorEl.querySelector('.style-actions').parentElement.insertBefore(statsDiv, seCalcStats);
+    }
+    const radiusLabel = p._circleRadius
+      ? `${Math.round(p._circleRadius)} m`
+      : 'N/A';
+
+    statsDiv.innerHTML = `
+      <div style="font-weight:800;margin-bottom:4px;color:#60a5fa;">
+        Within this ${radiusLabel} circle, there are:
+      </div>
+      <div style="display:grid;gap:4px;font-size:13px;line-height:1.4;">
+        <div>🏢 HDB Blocks: ${p._hdbCount || 0}</div>
+        <div>➕ AEDs: ${p._aedCount || 0}</div>
+        <div>🚌 Bus Stops: ${p._busCount || 0}</div>
+        <div>🚫 No-entry Signs: ${p._noEntryCount || 0}</div>
+        <div>🐌 Slow Signs: ${p._slowSignCount || 0}</div>
+        <div>🛑 Stop Signs: ${p._stopSignCount || 0}</div>
+      </div>
+    `;
+  }
+} else {
+  // Remove buttons and stats display for non-circles
+  if (seCalcStats) {
+    try { seCalcStats.remove(); } catch {}
+    seCalcStats = null;
+  }
+  if (seGlimpseSigns) {
+    try { seGlimpseSigns.remove(); } catch {}
+    seGlimpseSigns = null;
+  }
+  const statsDiv = document.getElementById('se-stats-display');
+  if (statsDiv) {
+    try { statsDiv.remove(); } catch {}
+  }
+}
+
 
 // Smart positioning: measure actual editor height and position to keep it fully visible
   editorEl.style.display='block';
@@ -3214,16 +3261,26 @@ function closeStyleEditor(){
   editorEl.style.display='none'; 
   editCtx=null; 
   
-  // Clean up stats button and display
+  // Clean up stats button, glimpse button and display
   if (seCalcStats) {
     try { seCalcStats.remove(); } catch {}
     seCalcStats = null;
+  }
+  if (seGlimpseSigns) {
+    try { seGlimpseSigns.remove(); } catch {}
+    seGlimpseSigns = null;
   }
   const statsDiv = document.getElementById('se-stats-display');
   if (statsDiv) {
     try { statsDiv.remove(); } catch {}
   }
+
+  // Also clear any Glimpse overlay from the map
+  if (typeof clearGlimpseOverlay === 'function') {
+    clearGlimpseOverlay();
+  }
 }
+
 
 function applyEditor(){
   if(!editCtx) return;
@@ -4348,46 +4405,98 @@ function findFeatureByFid(fid) {
   return null;
 }
 
+function extractTrafficSignCategory(feature) {
+  const props = feature && feature.properties ? feature.properties : {};
+  let typ = '';
+
+  // 1) Prefer explicit TYP_CD fields if present
+  if (props.TYP_CD != null) {
+    typ = String(props.TYP_CD).toUpperCase();
+  } else if (props.typ_cd != null) {
+    typ = String(props.typ_cd).toUpperCase();
+  } else if (props.TYP != null) {
+    typ = String(props.TYP).toUpperCase();
+  } else if (props.Description) {
+    // 2) Fallback for older KML-style Description HTML
+    const desc = String(props.Description);
+    const match = desc.match(/<th>\s*TYP_CD\s*<\/th>\s*<td>(.*?)<\/td>/i);
+    const typCdRaw = match ? match[1] : '';
+    typ = typCdRaw.replace(/<[^>]+>/g, '').toUpperCase().trim();
+  }
+
+  if (!typ) return null;
+
+  if (typ.includes('NO ENTRY')) return 'NO_ENTRY';
+  if (typ.includes('SLOW')) return 'SLOW';
+  if (typ.includes('STOP')) return 'STOP';
+
+  return null; // other sign types we don’t care about here
+}
+
+
 // Fetch a GeoJSON FeatureCollection from data.gov.sg "poll-download" API
 async function fetchDataGovGeoJson(datasetId) {
   const pollUrl = `https://api-open.data.gov.sg/v1/public/api/datasets/${datasetId}/poll-download`;
 
-  console.log('🌐 Polling data.gov.sg for dataset', datasetId, pollUrl);
+  try {
+    console.log('🌐 Polling data.gov.sg for dataset', datasetId, pollUrl);
 
-  const pollResp = await fetch(
-    `https://corsproxy.io/?${encodeURIComponent(pollUrl)}`
-  );
-  console.log('📥 poll-download status:', pollResp.status);
+    const pollResp = await fetch(
+      `https://corsproxy.io/?${encodeURIComponent(pollUrl)}`
+    );
+    console.log('📥 poll-download status:', pollResp.status);
 
-  const pollJson = await pollResp.json();
-  console.log('📊 poll-download payload:', pollJson);
+    const pollJson = await pollResp.json();
+    console.log('📊 poll-download payload:', pollJson);
 
-  // Basic sanity check
-  if (!pollJson || pollJson.code !== 0 || !pollJson.data || !pollJson.data.url) {
-    console.warn('⚠️ Unexpected poll-download response for', datasetId, pollJson);
+    // Some datasets might return GeoJSON directly from poll-download
+    if (pollJson && pollJson.type === 'FeatureCollection' && Array.isArray(pollJson.features)) {
+      console.log('✅ poll-download already returned a FeatureCollection');
+      return pollJson;
+    }
+
+    // Normal case: poll-download returns a wrapper with data.url
+    if (!pollJson || pollJson.code !== 0 || !pollJson.data || !pollJson.data.url) {
+      console.warn('⚠️ Unexpected poll-download response for', datasetId, pollJson);
+      return null;
+    }
+
+    const downloadUrl = pollJson.data.url;
+    console.log('⬇️ Downloading actual data file:', downloadUrl);
+
+    const dataResp = await fetch(
+      `https://corsproxy.io/?${encodeURIComponent(downloadUrl)}`
+    );
+    console.log('📥 data file status:', dataResp.status);
+
+    const dataJson = await dataResp.json();
+    console.log('📦 Parsed data file:', dataJson);
+
+    if (!dataJson || dataJson.type !== 'FeatureCollection' || !Array.isArray(dataJson.features)) {
+      console.warn('⚠️ Expected GeoJSON FeatureCollection for', datasetId, dataJson);
+      return null;
+    }
+
+    return dataJson;
+  } catch (e) {
+    console.error('❌ fetchDataGovGeoJson failed for dataset', datasetId, e);
     return null;
   }
-
-  const downloadUrl = pollJson.data.url;
-  console.log('⬇️ Downloading actual data file:', downloadUrl);
-
-  const dataResp = await fetch(
-    `https://corsproxy.io/?${encodeURIComponent(downloadUrl)}`
-  );
-  console.log('📥 data file status:', dataResp.status);
-
-  const geojson = await dataResp.json();
-  console.log('📦 Parsed data file:', geojson);
-
-  if (geojson.type !== 'FeatureCollection' || !Array.isArray(geojson.features)) {
-    console.warn('⚠️ Expected GeoJSON FeatureCollection for', datasetId, geojson);
-    return null;
-  }
-
-  return geojson;
 }
 
+/* =========== GLIMPSE TRAFFIC SIGNS OVERLAY =========== */
 
+// Define the missing constants
+const GLIMPSE_SIGNS_SOURCE_ID = 'glimpse-traffic-signs-src';
+const GLIMPSE_SIGNS_LAYER_ID  = 'glimpse-traffic-signs-layer';
+
+// Keep the old names for backward compatibility
+const GLIMPSE_TS_SOURCE_ID   = GLIMPSE_SIGNS_SOURCE_ID;
+const GLIMPSE_TS_LAYER_STOP  = 'glimpse-traffic-signs-stop';
+const GLIMPSE_TS_LAYER_SLOW  = 'glimpse-traffic-signs-slow';
+const GLIMPSE_TS_LAYER_NOENTRY = 'glimpse-traffic-signs-noentry';
+
+let leafletGlimpseLayer = null;
 
 
 async function loadCircleStatistics(fid, center, radiusMeters) {
@@ -4622,28 +4731,18 @@ async function loadCircleStatistics(fid, center, radiusMeters) {
 
           const pt = turf.point([lng, lat]);
           if (!turf.booleanPointInPolygon(pt, circlePolygon)) {
-            // sign is outside the circle → skip parsing Description
+            // sign is outside the circle
             continue;
           }
 
-          // New schema: TYP_CD is a direct property
-          let typCdRaw = (f.properties && f.properties.TYP_CD) || '';
+          const category = extractTrafficSignCategory(f);
+          if (!category) continue;
 
-          // Fallback to old schema, just in case you ever load an old file:
-          if (!typCdRaw && f.properties && f.properties.Description) {
-            const match = f.properties.Description.match(/<th>\s*TYP_CD\s*<\/th>\s*<td>(.*?)<\/td>/i);
-            typCdRaw = match ? match[1] : '';
-          }
-
-          const typCd = String(typCdRaw).toUpperCase();
-          if (!typCd) continue;
-
-
-          if (typCd.includes('NO ENTRY')) {
+          if (category === 'NO_ENTRY') {
             noEntryCount++;
-          } else if (typCd.includes('SLOW')) {
+          } else if (category === 'SLOW') {
             slowSignCount++;
-          } else if (typCd.includes('STOP')) {
+          } else if (category === 'STOP') {
             stopSignCount++;
           }
         } catch (e) {
@@ -4717,6 +4816,267 @@ async function loadCircleStatistics(fid, center, radiusMeters) {
     }
   }
 }
+
+
+
+
+/**
+ * Clear any existing Glimpse overlay from both engines.
+ */
+function clearGlimpseOverlay() {
+  console.log('[Glimpse] Clearing existing overlay');
+
+  // MapLibre GL
+  if (typeof mapgl !== 'undefined' && mapgl && mapgl.getSource) {
+    try {
+      if (mapgl.getLayer(GLIMPSE_SIGNS_LAYER_ID)) {
+        mapgl.removeLayer(GLIMPSE_SIGNS_LAYER_ID);
+      }
+      if (mapgl.getSource(GLIMPSE_SIGNS_SOURCE_ID)) {
+        mapgl.removeSource(GLIMPSE_SIGNS_SOURCE_ID);
+      }
+    } catch (e) {
+      console.warn('[Glimpse] Failed to clear GL overlay', e);
+    }
+  }
+
+  // Leaflet
+  if (typeof mapleaf !== 'undefined' && mapleaf && leafletGlimpseLayer) {
+    try {
+      mapleaf.removeLayer(leafletGlimpseLayer);
+    } catch (e) {
+      console.warn('[Glimpse] Failed to clear Leaflet overlay', e);
+    }
+    leafletGlimpseLayer = null;
+  }
+}
+
+/**
+ * Load the traffic sign dataset (same ID used by statistics),
+ * with a simple cache so we only fetch once.
+ */
+async function getTrafficSignDataForGlimpse() {
+  const TRAFFIC_DATASET_ID = 'd_bbf0132c7290d6838f82003972d933d5';
+  const w = (typeof window !== 'undefined') ? window : globalThis;
+
+  if (!w.__TRAFFIC_SIGN_CACHE_PROMISE) {
+    console.log('[Glimpse] No cache yet, calling fetchDataGovGeoJson');
+    w.__TRAFFIC_SIGN_CACHE_PROMISE = fetchDataGovGeoJson(TRAFFIC_DATASET_ID);
+  } else {
+    console.log('[Glimpse] Using cached traffic-sign data');
+  }
+
+  try {
+    const data = await w.__TRAFFIC_SIGN_CACHE_PROMISE;
+    console.log(
+      '[Glimpse] Traffic-sign data loaded:',
+      data && Array.isArray(data.features) ? data.features.length : 0,
+      'features'
+    );
+    return data;
+  } catch (e) {
+    console.error('[Glimpse] Failed to load traffic-sign data', e);
+    return null;
+  }
+}
+
+/**
+ * Draw the given features (already filtered to the circle) on the map.
+ * Each feature MUST have properties.category and properties.emoji.
+ */
+function renderGlimpseSigns(features) {
+  console.log(
+    '[Glimpse] renderGlimpseSigns with',
+    features.length,
+    'features. engine =',
+    typeof engine !== 'undefined' ? engine : '(none)'
+  );
+
+  // Clear old overlay first
+  clearGlimpseOverlay();
+
+  if (!features.length) {
+    console.log('[Glimpse] No features to render');
+    return;
+  }
+
+  const fc = {
+    type: 'FeatureCollection',
+    features
+  };
+
+  // ------------ MapLibre GL ------------
+  if (typeof mapgl !== 'undefined' && mapgl && mapgl.addSource && engine === 'gl') {
+    try {
+      console.log('[Glimpse] Rendering on MapLibre GL (circle + label)');
+
+      // Create or update the GeoJSON source
+      if (!mapgl.getSource(GLIMPSE_SIGNS_SOURCE_ID)) {
+        mapgl.addSource(GLIMPSE_SIGNS_SOURCE_ID, {
+          type: 'geojson',
+          data: fc
+        });
+      } else {
+        mapgl.getSource(GLIMPSE_SIGNS_SOURCE_ID).setData(fc);
+      }
+
+      // Remove old layers if they exist
+      if (mapgl.getLayer(GLIMPSE_SIGNS_LAYER_ID)) {
+        mapgl.removeLayer(GLIMPSE_SIGNS_LAYER_ID);
+      }
+      const GLIMPSE_SIGNS_TEXT_LAYER_ID = 'glimpse-signs-text-layer';
+      if (mapgl.getLayer(GLIMPSE_SIGNS_TEXT_LAYER_ID)) {
+        mapgl.removeLayer(GLIMPSE_SIGNS_TEXT_LAYER_ID);
+      }
+
+      // 1) Circle layer with colours by category
+      mapgl.addLayer({
+        id: GLIMPSE_SIGNS_LAYER_ID,   // circle layer
+        type: 'circle',
+        source: GLIMPSE_SIGNS_SOURCE_ID,
+        paint: {
+          // Size of the icon
+          'circle-radius': 6,
+          // Colour by category: STOP / NO_ENTRY / SLOW
+          'circle-color': [
+            'match',
+            ['get', 'category'],
+            'STOP',     '#FF7F7F',   // red
+            'NO_ENTRY', '#ffa500',   // pink
+            'SLOW',     '#FFFFED',   // yellow
+            '#ffffff'                // fallback
+          ],
+          'circle-stroke-color': '#000000',
+          'circle-stroke-width': 1.0
+        }
+      });
+
+      // 2) Text layer with ST / NE / SL inside each dot
+      mapgl.addLayer({
+        id: GLIMPSE_SIGNS_TEXT_LAYER_ID,  // text on top
+        type: 'symbol',
+        source: GLIMPSE_SIGNS_SOURCE_ID,
+        layout: {
+          'text-field': ['get', 'label'],  // ST / NE / SL (from properties.label)
+          'text-size': 7,
+          'text-anchor': 'center',
+          'text-allow-overlap': true
+        },
+        paint: {
+          'text-color': '#000000',
+          'text-halo-color': '#ffffff',
+          'text-halo-width': 0.0
+        }
+      });
+
+    } catch (e) {
+      console.error('[Glimpse] Failed to render on MapLibre', e);
+    }
+  }
+
+
+  // ------------ Leaflet ------------
+  if (typeof mapleaf !== 'undefined' && mapleaf && typeof L !== 'undefined' && L && engine === 'leaf') {
+    console.log('[Glimpse] Rendering on Leaflet');
+
+    const markers = features.map(f => {
+      const coords = f.geometry.coordinates;
+      const [lng, lat] = coords;
+      const emoji = f.properties.emoji || '⚠️';
+
+      const icon = L.divIcon({
+        className: 'glimpse-sign-icon',
+        html: '<div style="font-size:20px;transform:translate(-50%,-50%);">' + emoji + '</div>'
+      });
+
+      return L.marker([lat, lng], { icon });
+    });
+
+    leafletGlimpseLayer = L.layerGroup(markers).addTo(mapleaf);
+  }
+} // <-- end of renderGlimpseSigns(features)
+
+/**
+ * Main entry point called from the Style Editor “Glimpse Signs” button.
+ * - center: [lng, lat]
+ * - radiusMeters: number
+ */
+async function glimpseTrafficSigns(fid, center, radiusMeters) {
+  console.log('👁️ Glimpse signs triggered', { fid, center, radiusMeters });
+
+  if (!center || !Array.isArray(center) || center.length !== 2 || !radiusMeters) {
+    console.warn('[Glimpse] Missing circle center/radius, aborting');
+    alert('Could not determine circle parameters for Glimpse.');
+    return;
+  }
+
+  const circlePolygon = turf.circle(center, radiusMeters, {
+    steps: 64,
+    units: 'meters'
+  });
+  console.log('[Glimpse] Circle polygon created');
+
+  const trafficData = await getTrafficSignDataForGlimpse();
+  if (!trafficData || !Array.isArray(trafficData.features)) {
+    alert('Could not load traffic-sign dataset.');
+    return;
+  }
+
+  const inside = [];
+
+  for (const f of trafficData.features) {
+    const geom = f.geometry;
+    if (!geom || geom.type !== 'Point') continue;
+
+    const coords = geom.coordinates || [];
+    const lng = parseFloat(coords[0]);
+    const lat = parseFloat(coords[1]);
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+
+    const pt = turf.point([lng, lat]);
+    if (!turf.booleanPointInPolygon(pt, circlePolygon)) continue;
+
+    const category = extractTrafficSignCategory(f);
+    if (!category) continue; // ignore other sign types
+
+    // Emoji for Leaflet, 2-letter label for MapLibre
+    let emoji = '⚠️';
+    let label = ''; // ST / NE / SL
+
+    if (category === 'STOP') {
+      emoji = '🛑';
+      label = 'ST';
+    } else if (category === 'NO_ENTRY') {
+      emoji = '⛔';
+      label = 'NE';
+    } else if (category === 'SLOW') {
+      emoji = '🐌';
+      label = 'SL';
+    }
+
+    inside.push({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [lng, lat] },
+      properties: {
+        category, // STOP / NO_ENTRY / SLOW
+        emoji,    // used by Leaflet divIcons
+        label     // used by MapLibre text-field (ST / NE / SL)
+      }
+    });
+  } // <-- closes the for-loop
+
+  console.log('[Glimpse] Signs inside circle:', inside.length);
+
+  if (!inside.length) {
+    alert('No STOP/SLOW/NO ENTRY signs found inside this circle.');
+    clearGlimpseOverlay();
+    return;
+  }
+
+  renderGlimpseSigns(inside);
+} // <-- closes async function glimpseTrafficSigns
+
+
 
 
 
