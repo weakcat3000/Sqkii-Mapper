@@ -3275,11 +3275,9 @@ function closeStyleEditor(){
     try { statsDiv.remove(); } catch {}
   }
 
-  // Also clear any Glimpse overlay from the map
-  if (typeof clearGlimpseOverlay === 'function') {
-    clearGlimpseOverlay();
-  }
+  // ⛔ no more clearGlimpseOverlay() here
 }
+
 
 
 function applyEditor(){
