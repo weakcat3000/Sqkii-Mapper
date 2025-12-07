@@ -336,10 +336,54 @@ a{color:var(--accent)}
 .scan-wait.visible{display:flex}
 .pulse{width:10px;height:10px;border-radius:999px;background:var(--accent);box-shadow:0 0 0 0 rgba(96,165,250,.7);animation:pulse 1s infinite}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(96,165,250,.7)}70%{box-shadow:0 0 0 18px rgba(96,165,250,0)}100%{box-shadow:0 0 0 0 rgba(96,165,250,0)}}
+
+
 /* Map controls */
 .maplibregl-ctrl-top-right{display:flex;flex-direction:column;gap:6px}
 .icon-btn{display:inline-grid;place-items:center;width:30px;height:30px;border:1px solid var(--border);border-radius:8px;background:var(--panel-2);cursor:pointer}
 .icon-btn svg{width:18px;height:18px}
+
+/* Connection indicator (top-left, faded) */
+#connection-indicator{
+  position:fixed;
+  top:10px;
+  left:10px;
+  z-index:1200;
+  background:rgba(15,17,21,0.75);
+  backdrop-filter:blur(8px);
+  border:1px solid rgba(31,36,48,0.6);
+  border-radius:10px;
+  padding:8px 12px;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  font-size:13px;
+  font-weight:600;
+  color:rgba(229,231,235,0.7);
+  pointer-events:none;
+  opacity:0.6;
+  transition:opacity 0.3s ease;
+}
+#connection-indicator:hover{
+  opacity:1;
+}
+#connection-indicator .pulse-dot{
+  width:8px;
+  height:8px;
+  border-radius:50%;
+  background:#22c55e;
+  box-shadow:0 0 0 0 rgba(34,197,94,0.7);
+  animation:pulse 2s infinite;
+}
+#connection-indicator.disconnected .pulse-dot{
+  background:#ef4444;
+  box-shadow:0 0 0 0 rgba(239,68,68,0.7);
+  animation:none;
+}
+
+/* Hide duplicate geolocate controls */
+
+
 /* Hide duplicate geolocate controls */
 .maplibregl-ctrl-top-right .maplibregl-ctrl-group:has(.maplibregl-ctrl-geolocate) ~ .maplibregl-ctrl-group:has(.maplibregl-ctrl-geolocate){display:none!important}
 @supports (-webkit-touch-callout: none) { #server-code-input,#draw-coord,#draw-radius,#url-input,input,select,textarea{font-size:16px!important;line-height:1.2;min-height:38px} }
@@ -356,6 +400,11 @@ a{color:var(--accent)}
   </style>
 </head>
 <body>
+<!-- Connection indicator (top-left, faded) -->
+<div id="connection-indicator" class="disconnected">
+  <div class="pulse-dot"></div>
+  <span id="connection-text">Not connected</span>
+</div>
 <div class="app" id="app">
   <button id="ui-reopen" class="ui-reopen" title="Open UI">Open UI</button>
 
@@ -3196,6 +3245,7 @@ if (isCircle) {
         <div>🏢 HDB Blocks: ${p._hdbCount || 0}</div>
         <div>➕ AEDs: ${p._aedCount || 0}</div>
         <div>🚌 Bus Stops: ${p._busCount || 0}</div>
+        <div>💡 Lamp Posts: ${p._lampPostCount || 0}</div>
         <div>🚫 No-entry Signs: ${p._noEntryCount || 0}</div>
         <div>🐌 Slow Signs: ${p._slowSignCount || 0}</div>
         <div>🛑 Stop Signs: ${p._stopSignCount || 0}</div>
@@ -3572,6 +3622,22 @@ const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 let currentRoomCode = null;
 const clientId = (()=>crypto.getRandomValues(new Uint32Array(4)).join('-'))();
+let connectedUsers = 1; // Start with self
+
+// Update connection indicator
+function updateConnectionIndicator() {
+  const indicator = document.getElementById('connection-indicator');
+  const text = document.getElementById('connection-text');
+  
+  if (!currentRoomCode) {
+    indicator.classList.add('disconnected');
+    text.textContent = 'Not connected';
+    return;
+  }
+  
+  indicator.classList.remove('disconnected');
+  text.textContent = `${connectedUsers} online`;
+}
 
 function debounce(fn, ms){ let t=null; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), ms); }; }
 
@@ -3690,9 +3756,12 @@ const syncToServerDebounced = debounce(async function(){
 function saveState(){ syncToServerDebounced(); }
 
 let roomChannel = null;
+let presenceChannel = null;
+
 function subscribeRoom(code){
   try{
     if (roomChannel){ roomChannel.unsubscribe(); roomChannel = null; }
+    if (presenceChannel){ presenceChannel.unsubscribe(); presenceChannel = null; }
 
     roomChannel = supabase.channel('rooms-' + code)
       .on(
@@ -3732,6 +3801,37 @@ function subscribeRoom(code){
         }
       )
       .subscribe(() => {});
+
+    // Presence tracking channel
+    presenceChannel = supabase.channel('presence-' + code, {
+      config: {
+        presence: {
+          key: clientId
+        }
+      }
+    });
+
+    presenceChannel
+      .on('presence', { event: 'sync' }, () => {
+        const state = presenceChannel.presenceState();
+        connectedUsers = Object.keys(state).length;
+        updateConnectionIndicator();
+      })
+      .on('presence', { event: 'join' }, ({ newPresences }) => {
+        console.log('User joined:', newPresences);
+      })
+      .on('presence', { event: 'leave' }, ({ leftPresences }) => {
+        console.log('User left:', leftPresences);
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await presenceChannel.track({
+            online_at: new Date().toISOString()
+          });
+          updateConnectionIndicator();
+        }
+      });
+
   } catch(e){
     console.error('subscribeRoom guard:', e);
   }
@@ -3840,6 +3940,7 @@ async function joinRoom(code) {
 
     // Start realtime for this room
     subscribeRoom(code);
+    updateConnectionIndicator();
 
     // Bind Pixel Grid
     if (window.PixelGrid && typeof window.PixelGrid.bindToRoom === 'function') {
@@ -4528,14 +4629,16 @@ async function loadCircleStatistics(fid, center, radiusMeters) {
     let hdbCount = 0;
     let aedCount = 0;
     let busStopCount = 0;
+    let lampPostCount = 0;
     let noEntryCount = 0;
     let slowSignCount = 0;
     let stopSignCount = 0;
 
-    // Dataset IDs on data.gov.sg (GeoJSON via poll-download)
+// Dataset IDs on data.gov.sg (GeoJSON via poll-download)
     const HDB_DATASET_ID = 'd_16b157c52ed637edd6ba1232e026258d';  // HDB Existing Building
     const AED_DATASET_ID = 'd_4e6b82c58a8a832f6f1fee5dfa6d47ea';  // Public Access AEDs
     const BUS_DATASET_ID = 'd_3f172c6feb3f4f92a2f47d93eed2908a';  // LTA Bus Stops
+    const LAMPPOST_DATASET_ID = 'd_ca109de3e83efdd9a10bc5f3dda70a98'; // Lamp Posts
     const TRAFFIC_DATASET_ID = 'd_bbf0132c7290d6838f82003972d933d5'; // LTA Traffic Sign
 
     // Helper: poll-download then fetch the actual GeoJSON
@@ -4590,14 +4693,18 @@ async function loadCircleStatistics(fid, center, radiusMeters) {
     if (!w.__BUS_CACHE_PROMISE) {
       w.__BUS_CACHE_PROMISE = fetchDataGovGeoJson(BUS_DATASET_ID, 'Bus Stop');
     }
+    if (!w.__LAMPPOST_CACHE_PROMISE) {
+      w.__LAMPPOST_CACHE_PROMISE = fetchDataGovGeoJson(LAMPPOST_DATASET_ID, 'Lamp Post');
+    }
     if (!w.__TRAFFIC_SIGN_CACHE_PROMISE) {
       w.__TRAFFIC_SIGN_CACHE_PROMISE = fetchDataGovGeoJson(TRAFFIC_DATASET_ID, 'Traffic Sign');
     }
 
-    const [hdbData, aedData, busData, trafficData] = await Promise.all([
+    const [hdbData, aedData, busData, lampPostData, trafficData] = await Promise.all([
       w.__HDB_CACHE_PROMISE,
       w.__AED_CACHE_PROMISE,
       w.__BUS_CACHE_PROMISE,
+      w.__LAMPPOST_CACHE_PROMISE,
       w.__TRAFFIC_SIGN_CACHE_PROMISE
     ]);
 
@@ -4710,6 +4817,44 @@ async function loadCircleStatistics(fid, center, radiusMeters) {
 
     console.log('🚌 Bus Stops inside/touching circle:', busStopCount);
 
+    // ---- Lamp Posts ----
+    if (lampPostData && Array.isArray(lampPostData.features)) {
+      for (const f of lampPostData.features) {
+        const geom = f.geometry;
+        if (!geom) continue;
+
+        try {
+          if (geom.type === 'Point') {
+            const coords = geom.coordinates || [];
+            const lng = parseFloat(coords[0]);
+            const lat = parseFloat(coords[1]);
+            if (!Number.isNaN(lng) && !Number.isNaN(lat)) {
+              const pt = turf.point([lng, lat]);
+              if (turf.booleanPointInPolygon(pt, circlePolygon)) {
+                lampPostCount++;
+              }
+            }
+          } else if (geom.type === 'Polygon' || geom.type === 'MultiPolygon') {
+            const lampGeom = geom.type === 'Polygon'
+              ? turf.polygon(geom.coordinates)
+              : turf.multiPolygon(geom.coordinates);
+
+            if (turf.booleanIntersects(lampGeom, circlePolygon)) {
+              lampPostCount++;
+            }
+          }
+        } catch (e) {
+          console.warn('⚠️ Error handling Lamp Post feature geometry', e, f);
+        }
+      }
+    } else {
+      console.warn('⚠️ Lamp Post dataset missing or invalid', lampPostData);
+    }
+
+    console.log('💡 Lamp Posts inside/touching circle:', lampPostCount);
+
+    // ---- Traffic Signs (no-entry, slow, stop) ----
+
     // ---- Traffic Signs (no-entry, slow, stop) ----
     if (trafficData && Array.isArray(trafficData.features)) {
       for (const f of trafficData.features) {
@@ -4760,6 +4905,7 @@ async function loadCircleStatistics(fid, center, radiusMeters) {
     feature.properties._statsCalculated = true;
     feature.properties._hdbCount = hdbCount;
     feature.properties._aedCount = aedCount;
+    feature.properties._lampPostCount = lampPostCount;
     feature.properties._busCount = busStopCount;
     feature.properties._noEntryCount = noEntryCount;
     feature.properties._slowSignCount = slowSignCount;
@@ -4796,8 +4942,9 @@ async function loadCircleStatistics(fid, center, radiusMeters) {
           <div>🏢 HDB Blocks: ${hdbCount}</div>
           <div>➕ AEDs: ${aedCount}</div>
           <div>🚌 Bus Stops: ${busStopCount}</div>
+          <div>💡 Lamp Posts: ${lampPostCount}</div>
           <div>🚫 No-entry Signs: ${noEntryCount}</div>
-          <div>🐌 Slow Signs: ${slowSignCount}</div>
+          <div>🌀 Slow Signs: ${slowSignCount}</div>
           <div>🛑 Stop Signs: ${stopSignCount}</div>
           <div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);">
             📏 Radius: ${radiusLabel}
