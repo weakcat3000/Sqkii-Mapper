@@ -343,33 +343,38 @@ a{color:var(--accent)}
 .icon-btn{display:inline-grid;place-items:center;width:30px;height:30px;border:1px solid var(--border);border-radius:8px;background:var(--panel-2);cursor:pointer}
 .icon-btn svg{width:18px;height:18px}
 
-/* Connection indicator (top-center) */
+/* Connection indicator (top-center) with dropdown */
 #connection-indicator{
   position:fixed;
   top:0;
   left:50%;
   transform:translateX(-50%);
   z-index:1200;
-  background:rgba(15,17,21,0.75);
+  background:rgba(15,17,21,0.90);
   backdrop-filter:blur(8px);
   border:1px solid rgba(31,36,48,0.6);
-  border-radius:0 0 10px 10px;
-  padding:5px 14px;
+  border-radius:0 0 8px 8px;
+  padding:4px 16px;
   display:flex;
   align-items:center;
-  justify-content:center;
-  gap:5px;
+  gap:12px;
   font-size:11px;
   font-weight:600;
-  color:rgba(229,231,235,0.7);
-  pointer-events:none;
-  opacity:0.6;
-  transition:opacity 0.3s ease;
+  color:rgba(229,231,235,0.9);
+  pointer-events:auto;
+  opacity:0.85;
+  transition:opacity 0.3s ease, padding 0.2s ease;
+  cursor:pointer;
+  user-select:none;
+  white-space:nowrap;
 }
-
 #connection-indicator:hover{
   opacity:1;
 }
+#connection-indicator.expanded{
+  padding-bottom:8px;
+}
+
 #connection-indicator .pulse-dot{
   width:8px;
   height:8px;
@@ -383,6 +388,63 @@ a{color:var(--accent)}
   box-shadow:0 0 0 0 rgba(239,68,68,0.7);
   animation:none;
 }
+
+#connection-header{
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+#connection-details{
+  font-size:11px;
+  color:rgba(229,231,235,0.6);
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+#connection-dropdown{
+  display:none;
+  position:absolute;
+  top:100%;
+  left:50%;
+  transform:translateX(-50%);
+  margin-top:4px;
+  width:320px;
+  max-height:400px;
+  overflow-y:auto;
+  background:rgba(15,17,21,0.98);
+  backdrop-filter:blur(12px);
+  border:1px solid rgba(31,36,48,0.8);
+  border-radius:10px;
+  padding:10px;
+  box-shadow:0 8px 24px rgba(0,0,0,0.4);
+}
+#connection-indicator.expanded #connection-dropdown{
+  display:block;
+}
+.user-item{
+  padding:6px 8px;
+  background:rgba(0,0,0,0.3);
+  border-radius:6px;
+  margin-bottom:4px;
+  font-size:11px;
+  line-height:1.4;
+}
+.user-item.self{
+  background:rgba(96,165,250,0.15);
+  border:1px solid rgba(96,165,250,0.3);
+}
+.user-item-name{
+  font-weight:700;
+  color:#60a5fa;
+  margin-bottom:2px;
+}
+.user-item-info{
+  color:rgba(229,231,235,0.6);
+  font-size:10px;
+}
+#connection-dropdown::-webkit-scrollbar{width:6px;}
+#connection-dropdown::-webkit-scrollbar-track{background:transparent;}
+#connection-dropdown::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.2);border-radius:3px;}
 
 /* Hide duplicate geolocate controls */
 
@@ -403,10 +465,14 @@ a{color:var(--accent)}
   </style>
 </head>
 <body>
-<!-- Connection indicator (top-left, faded) -->
+<!-- Connection indicator (ontop, faded) -->
 <div id="connection-indicator" class="disconnected">
-  <div class="pulse-dot"></div>
-  <span id="connection-text">Not connected</span>
+  <div id="connection-header">
+    <div class="pulse-dot"></div>
+    <span id="connection-text">Not connected</span>
+  </div>
+  <div id="connection-details"></div>
+  <div id="connection-dropdown"></div>
 </div>
 <div class="app" id="app">
   <button id="ui-reopen" class="ui-reopen" title="Open UI">Open UI</button>
@@ -3623,6 +3689,61 @@ const SUPABASE_URL = 'https://dfzsndktevcjjbtfwrvs.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRmenNuZGt0ZXZjampidGZ3cnZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgwNDYxMzMsImV4cCI6MjA3MzYyMjEzM30.C9VbQMkl1Y4R-K5Dl2GwOxh58afFCQo5h2aK3RE8HpY';
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+/* ================= Enhanced User Info ================= */
+let userInfo = {
+  ip: 'Loading...',
+  city: 'Unknown',
+  country: 'Unknown',
+  countryCode: '',
+  device: 'Unknown',
+  browser: 'Unknown'
+};
+
+// Detect device type
+function detectDevice() {
+  const ua = navigator.userAgent;
+  if (/mobile/i.test(ua)) return '📱 Mobile';
+  if (/tablet|ipad/i.test(ua)) return '📱 Tablet';
+  return '💻 Desktop';
+}
+
+// Detect browser
+function detectBrowser() {
+  const ua = navigator.userAgent;
+  if (ua.includes('Firefox')) return 'Firefox';
+  if (ua.includes('Chrome') && !ua.includes('Edg')) return 'Chrome';
+  if (ua.includes('Safari') && !ua.includes('Chrome')) return 'Safari';
+  if (ua.includes('Edg')) return 'Edge';
+  return 'Unknown';
+}
+
+// Fetch IP and location info
+async function fetchUserInfo() {
+  try {
+    const response = await fetch('https://ipapi.co/json/');
+    const data = await response.json();
+    
+    userInfo = {
+      ip: data.ip || 'Unknown',
+      city: data.city || 'Unknown',
+      country: data.country_name || 'Unknown',
+      countryCode: data.country_code || '',
+      device: detectDevice(),
+      browser: detectBrowser()
+    };
+    
+    updateConnectionIndicator();
+  } catch (e) {
+    console.warn('Failed to fetch user info:', e);
+    userInfo.device = detectDevice();
+    userInfo.browser = detectBrowser();
+    updateConnectionIndicator();
+  }
+}
+
+// Call on page load
+fetchUserInfo();
+
 let currentRoomCode = null;
 const clientId = (()=>crypto.getRandomValues(new Uint32Array(4)).join('-'))();
 let connectedUsers = 1; // Start with self
@@ -3631,16 +3752,67 @@ let connectedUsers = 1; // Start with self
 function updateConnectionIndicator() {
   const indicator = document.getElementById('connection-indicator');
   const text = document.getElementById('connection-text');
+  const details = document.getElementById('connection-details');
+  const dropdown = document.getElementById('connection-dropdown');
   
   if (!currentRoomCode) {
     indicator.classList.add('disconnected');
     text.textContent = 'Not connected';
+    details.innerHTML = '';
+    dropdown.innerHTML = '';
     return;
   }
   
   indicator.classList.remove('disconnected');
   text.textContent = `${connectedUsers} online`;
+  
+  // Show Room, Location, IP in details line
+  const detailsParts = [];
+  if (currentRoomCode) detailsParts.push(`Room: ${currentRoomCode}`);
+  if (userInfo.city !== 'Unknown') detailsParts.push(`📍 ${userInfo.city}, ${userInfo.countryCode}`);
+  if (userInfo.ip !== 'Loading...') detailsParts.push(`IP: ${userInfo.ip}`);
+  details.innerHTML = detailsParts.join(' <span style="opacity:0.4;">•</span> ');
+  
+  // Build dropdown with list of users
+  if (window.connectedUsersList && window.connectedUsersList.length > 0) {
+    let html = '<div style="font-weight:700;margin-bottom:6px;color:#60a5fa;">Connected Users:</div>';
+    
+    window.connectedUsersList.forEach((user, i) => {
+      const isYou = user.client_id === clientId;
+      const userClass = isYou ? 'user-item self' : 'user-item';
+      const userName = isYou ? 'You' : `User ${i + 1}`;
+      
+      html += `<div class="${userClass}">`;
+      html += `<div class="user-item-name">${userName}</div>`;
+      html += `<div class="user-item-info">`;
+      html += `${user.device || '💻 Desktop'} • ${user.browser || 'Unknown'}`;
+      if (user.city && user.country) {
+        html += ` • ${user.city}, ${user.country}`;
+      }
+      html += `</div></div>`;
+    });
+    
+    dropdown.innerHTML = html;
+  } else {
+    dropdown.innerHTML = '<div style="color:rgba(229,231,235,0.6);font-size:11px;">No other users online</div>';
+  }
 }
+
+// Toggle dropdown on click
+document.getElementById('connection-indicator')?.addEventListener('click', (e) => {
+  const indicator = document.getElementById('connection-indicator');
+  if (currentRoomCode && connectedUsers >= 1) {
+    indicator.classList.toggle('expanded');
+  }
+});
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+  const indicator = document.getElementById('connection-indicator');
+  if (!indicator.contains(e.target)) {
+    indicator.classList.remove('expanded');
+  }
+});
 
 function debounce(fn, ms){ let t=null; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), ms); }; }
 
@@ -3818,6 +3990,17 @@ function subscribeRoom(code){
       .on('presence', { event: 'sync' }, () => {
         const state = presenceChannel.presenceState();
         connectedUsers = Object.keys(state).length;
+  
+        // Store all users info
+        const users = [];
+        for (const key in state) {
+          const userArray = state[key];
+          if (userArray && userArray[0]) {
+            users.push(userArray[0]);
+          }
+        }
+  
+        window.connectedUsersList = users;
         updateConnectionIndicator();
       })
       .on('presence', { event: 'join' }, ({ newPresences }) => {
@@ -3829,6 +4012,11 @@ function subscribeRoom(code){
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
           await presenceChannel.track({
+            client_id: clientId,
+            device: userInfo.device,
+            browser: userInfo.browser,
+            city: userInfo.city,
+            country: userInfo.countryCode,
             online_at: new Date().toISOString()
           });
           updateConnectionIndicator();
