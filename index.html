@@ -694,6 +694,49 @@ a{color:var(--accent)}
   </div>
 </div>
 
+<!-- Recon Coin Modal -->
+<div id="recon-modal" class="modal">
+  <div class="modal-card" style="max-width:600px;width:94%;max-height:90vh;overflow-y:auto;">
+    <h3 style="margin-bottom:8px">🎯 Recon for the Coin - Find Exact Locations</h3>
+    <small class="hint">Search for locations within the circle that match specific criteria.</small>
+    
+    <div style="margin-top:12px;padding:10px;background:rgba(96,165,250,0.1);border-radius:8px;border:1px solid rgba(96,165,250,0.3);">
+      <label class="hint" style="display:block;margin-bottom:6px;font-weight:700;">Scan Precision</label>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">
+        <button class="recon-precision-btn" data-precision="20" style="padding:6px;background:var(--chip);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;color:#ffffff;">
+          ⚡ Fast<br><span style="font-size:10px;opacity:0.7;color:#ffffff;">~20m spacing</span>
+        </button>
+        <button class="recon-precision-btn active" data-precision="10" style="padding:6px;background:var(--chip);border:2px solid #60a5fa;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;color:#ffffff;">
+          ⚖️ Normal<br><span style="font-size:10px;opacity:0.7;color:#ffffff;">~10m spacing</span>
+        </button>
+        <button class="recon-precision-btn" data-precision="5" style="padding:6px;background:var(--chip);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;color:#ffffff;">
+          🎯 Precise<br><span style="font-size:10px;opacity:0.7;color:#ffffff;">~5m spacing</span>
+        </button>
+      </div>
+      <div class="hint" style="margin-top:4px;font-size:11px;text-align:center;">
+        <span id="recon-precision-hint">Normal speed, good accuracy</span>
+      </div>
+    </div>
+    
+    <div id="recon-constraints" style="margin-top:16px;display:grid;gap:12px;">
+      <!-- Constraint rows will be added here dynamically -->
+    </div>
+    
+    <div style="display:flex;gap:8px;margin-top:12px;justify-content:space-between;align-items:center;">
+      <button id="recon-add-constraint" class="btn small" style="background:rgba(96,165,250,0.15);border-color:#60a5fa;">+ Add Constraint</button>
+      <div style="display:flex;gap:8px;">
+        <button id="recon-reveal" class="btn small" style="background:rgba(34,197,94,0.2);border-color:#22c55e;">🔍 Reveal Locations</button>
+        <button id="recon-close" class="btn small">Close</button>
+      </div>
+    </div>
+    
+    <div id="recon-status" class="hint" style="margin-top:8px;text-align:center;color:#60a5fa;"></div>
+  </div>
+</div>
+
+
+
+
 <!-- ===== Geohashes Editor (no upload; edits existing layer) ===== -->
 <div id="geohash-modal" class="modal">
   <div class="modal-card" style="max-width:980px;width:96%;">
@@ -2858,7 +2901,7 @@ byId('draw-apply').addEventListener('click', ()=>{
   const name = `Circle ${radius}m (RED) @ ${timestampLabel()}`;
   const props = { 
     fid, name, hidden:false, _gid:fid, _ts:Date.now(), 
-    _fill:hex, _fillOpacity:0.18, _stroke:hex, _strokeOpacity:0.9, _weight:2,
+    _fill:hex, _fillOpacity:0.12, _stroke:hex, _strokeOpacity:0.9, _weight:2,
     _circleCenter: centerLngLat,  // Store center for statistics
     _circleRadius: radius         // Store radius for statistics
   };
@@ -3116,6 +3159,7 @@ const editToggle = document.getElementById('edit-toggle');
 // Add Calculate Statistics/Glimpse button element (will be created dynamically)
 let seCalcStats = null;
 let seGlimpseSigns = null;
+let seReconCoin = null;  
 
 
 
@@ -3125,6 +3169,7 @@ seDelete.addEventListener('click', ()=>{
   
   // Close popup if it's for the feature being deleted
   closeActivePopup();
+  clearReconOverlay();
   
   const ix = entry.data.features.findIndex(x=>x.properties.fid===fid);
   if(ix<0) return;
@@ -3208,88 +3253,115 @@ if (isCircle) {
     try { seCalcStats.remove(); } catch {}
     seCalcStats = null;
   }
+  if (seReconCoin) {  
+    try { seReconCoin.remove(); } catch {}
+    seReconCoin = null;
+  }
   if (seGlimpseSigns) {
     try { seGlimpseSigns.remove(); } catch {}
     seGlimpseSigns = null;
   }
   
-  // Create new Calculate Statistics button
-  seCalcStats = document.createElement('button');
-  seCalcStats.className = 'btn small';
-  seCalcStats.style.cssText = 'width:100%;margin-top:8px;background:rgba(96,165,250,0.15);border-color:#60a5fa;';
+// Create new Calculate Statistics button
+seCalcStats = document.createElement('button');
+seCalcStats.className = 'btn small';
+seCalcStats.style.cssText = 'width:100%;margin-top:8px;background:rgba(96,165,250,0.15);border-color:#60a5fa;';
+
+const hasStats = p._statsCalculated;
+seCalcStats.textContent = hasStats ? '🔄 Recalculate Statistics' : '📊 Calculate Statistics';
+seCalcStats.id = 'se-calc-stats';
+
+seCalcStats.onclick = () => {
+  // Try to get circle metadata
+  let center = p._circleCenter;
+  let radius = p._circleRadius;
   
-  const hasStats = p._statsCalculated;
-  seCalcStats.textContent = hasStats ? '🔄 Recalculate Statistics' : '📊 Calculate Statistics';
-  seCalcStats.id = 'se-calc-stats';
-  
-  seCalcStats.onclick = () => {
-    // Try to get circle metadata
-    let center = p._circleCenter;
-    let radius = p._circleRadius;
-    
-    // If no metadata, calculate from geometry centroid and approximate radius
-    if (!center || !radius) {
-      try {
-        const centroid = turf.centroid(f);
-        center = centroid.geometry.coordinates;
-        
-        // Approximate radius from bbox
-        const bbox = turf.bbox(f);
-        const dx = bbox[2] - bbox[0];
-        const dy = bbox[3] - bbox[1];
-        radius = Math.max(dx, dy) * 111320 / 2; // rough meters conversion
-        
-        console.log('Estimated circle:', { center, radius });
-      } catch (e) {
-        console.error('Could not estimate circle parameters:', e);
-        alert('Could not determine circle parameters. Please use the Draw Circle tool.');
-        return;
-      }
+  // If no metadata, calculate from geometry centroid and approximate radius
+  if (!center || !radius) {
+    try {
+      const centroid = turf.centroid(f);
+      center = centroid.geometry.coordinates;
+      
+      // Approximate radius from bbox
+      const bbox = turf.bbox(f);
+      const dx = bbox[2] - bbox[0];
+      const dy = bbox[3] - bbox[1];
+      radius = Math.max(dx, dy) * 111320 / 2; // rough meters conversion
+      
+      console.log('Estimated circle:', { center, radius });
+    } catch (e) {
+      console.error('Could not estimate circle parameters:', e);
+      alert('Could not determine circle parameters. Please use the Draw Circle tool.');
+      return;
     }
-    
-    loadCircleStatistics(fid, center, radius);
-  };
-
-  // Create Glimpse Signs button
-  seGlimpseSigns = document.createElement('button');
-  seGlimpseSigns.className = 'btn small';
-  seGlimpseSigns.style.cssText = 'width:100%;margin-top:4px;background:rgba(250,204,21,0.15);border-color:#facc15;';
-  seGlimpseSigns.textContent = '👁️ Glimpse Signs';
-
-  seGlimpseSigns.onclick = async () => {
-    // Same center/radius logic as stats
-    let center = p._circleCenter;
-    let radius = p._circleRadius;
-
-    if (!center || !radius) {
-      try {
-        const centroid = turf.centroid(f);
-        center = centroid.geometry.coordinates;
-        
-        const bbox = turf.bbox(f);
-        const dx = bbox[2] - bbox[0];
-        const dy = bbox[3] - bbox[1];
-        radius = Math.max(dx, dy) * 111320 / 2;
-        
-        console.log('Estimated circle for Glimpse:', { center, radius });
-      } catch (e) {
-        console.error('Could not estimate circle parameters for Glimpse:', e);
-        alert('Could not determine circle parameters. Please use the Draw Circle tool.');
-        return;
-      }
-    }
-
-    await glimpseTrafficSigns(fid, center, radius);
-  };
-  
-  // Insert both buttons before the actions row
-  const actionsRow = editorEl.querySelector('.style-actions');
-  if (actionsRow) {
-    const parent = actionsRow.parentElement;
-    // Order: Calculate → Glimpse → actions
-    parent.insertBefore(seCalcStats, actionsRow);
-    parent.insertBefore(seGlimpseSigns, actionsRow);
   }
+  
+  loadCircleStatistics(fid, center, radius);
+};
+
+// Create Recon Coin button
+seReconCoin = document.createElement('button');
+seReconCoin.className = 'btn small';
+seReconCoin.style.cssText = 'width:100%;margin-top:4px;background:rgba(34,197,94,0.15);border-color:#22c55e;';
+seReconCoin.textContent = '🎯 Recon Coin';
+
+seReconCoin.onclick = () => {
+  let center = p._circleCenter;
+  let radius = p._circleRadius;
+
+  if (!center || !radius) {
+    try {
+      const centroid = turf.centroid(f);
+      center = centroid.geometry.coordinates;
+      const bbox = turf.bbox(f);
+      const dx = bbox[2] - bbox[0];
+      const dy = bbox[3] - bbox[1];
+      radius = Math.max(dx, dy) * 111320 / 2;
+    } catch (e) {
+      alert('Could not determine circle parameters.');
+      return;
+    }
+  }
+
+  openReconModal(fid, center, radius);
+};
+
+// Create Glimpse Signs button
+seGlimpseSigns = document.createElement('button');
+seGlimpseSigns.className = 'btn small';
+seGlimpseSigns.style.cssText = 'width:100%;margin-top:4px;background:rgba(250,204,21,0.15);border-color:#facc15;';
+seGlimpseSigns.textContent = '👁️ Glimpse Signs';
+
+seGlimpseSigns.onclick = async () => {
+  let center = p._circleCenter;
+  let radius = p._circleRadius;
+
+  if (!center || !radius) {
+    try {
+      const centroid = turf.centroid(f);
+      center = centroid.geometry.coordinates;
+      const bbox = turf.bbox(f);
+      const dx = bbox[2] - bbox[0];
+      const dy = bbox[3] - bbox[1];
+      radius = Math.max(dx, dy) * 111320 / 2;
+    } catch (e) {
+      alert('Could not determine circle parameters. Please use the Draw Circle tool.');
+      return;
+    }
+  }
+
+  await glimpseTrafficSigns(fid, center, radius);
+};
+
+// Insert all buttons before the actions row
+const actionsRow = editorEl.querySelector('.style-actions');
+if (actionsRow) {
+  const parent = actionsRow.parentElement;
+  // Order: Calculate → Recon → Glimpse → actions
+  parent.insertBefore(seCalcStats, actionsRow);
+  parent.insertBefore(seReconCoin, actionsRow);
+  parent.insertBefore(seGlimpseSigns, actionsRow);
+}
   
   // Show cached stats if available
   if (hasStats) {
@@ -3325,10 +3397,16 @@ if (isCircle) {
     try { seCalcStats.remove(); } catch {}
     seCalcStats = null;
   }
+  if (seReconCoin) {  // <-- ADD THESE 4 NEW LINES
+    try { seReconCoin.remove(); } catch {}
+    seReconCoin = null;
+  }
   if (seGlimpseSigns) {
     try { seGlimpseSigns.remove(); } catch {}
     seGlimpseSigns = null;
   }
+
+
   const statsDiv = document.getElementById('se-stats-display');
   if (statsDiv) {
     try { statsDiv.remove(); } catch {}
@@ -3378,24 +3456,20 @@ function closeStyleEditor(){
   editorEl.style.display='none'; 
   editCtx=null; 
   
-  // Clean up stats button, glimpse button and display
+  // Clean up stats button, recon button, glimpse button and display
   if (seCalcStats) {
     try { seCalcStats.remove(); } catch {}
     seCalcStats = null;
+  }
+  if (seReconCoin) {
+    try { seReconCoin.remove(); } catch {}
+    seReconCoin = null;
   }
   if (seGlimpseSigns) {
     try { seGlimpseSigns.remove(); } catch {}
     seGlimpseSigns = null;
   }
-  const statsDiv = document.getElementById('se-stats-display');
-  if (statsDiv) {
-    try { statsDiv.remove(); } catch {}
-  }
-
-  // ⛔ no more clearGlimpseOverlay() here
-}
-
-
+} 
 
 function applyEditor(){
   if(!editCtx) return;
@@ -4184,6 +4258,32 @@ serverJoin.addEventListener('click', async () => {
   }
 });
 
+// Handle "Continue without sync" button
+document.getElementById('server-continue').addEventListener('click', async () => {
+  hideServerModal();
+  
+  // Load local state if available
+  try {
+    const saved = localStorage.getItem('sqkii-mapper-state-v1');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      await applyStateArray(parsed);
+      console.log('✓ Loaded local state');
+    }
+  } catch (e) {
+    console.warn('Failed to load local state:', e);
+  }
+  
+  // Try to load editing state
+  try {
+    const editSaved = localStorage.getItem('sqkii-editing');
+    if (editSaved === '1') {
+      editingEnabled = true;
+      reflectEditUI();
+    }
+  } catch {}
+});
+
 
 /* ====================== AUDIO + SFX (stable) ====================== */
 let audioEnabled = true;
@@ -4424,6 +4524,432 @@ scanNow.addEventListener('click', async ()=>{
   scanNow.disabled=false; scanWait.classList.remove('visible'); closeSonar();
 });
 
+
+/* ====================== RECON COIN SYSTEM ====================== */
+
+let reconConstraints = [];
+let currentReconCircle = null;
+let reconPrecision = 10; // Default: 10m spacing
+const RECON_OVERLAY_SOURCE = 'recon-overlay-src';
+const RECON_OVERLAY_LAYER = 'recon-overlay-layer';
+let leafletReconLayer = null;
+
+function openReconModal(fid, center, radius) {
+  clearReconOverlay();
+
+  currentReconCircle = { fid, center, radius };
+  reconConstraints = [];
+  reconPrecision = 10; // Reset to default
+  
+  const modal = document.getElementById('recon-modal');
+  modal.classList.add('visible');
+  document.getElementById('app').classList.add('blocked-by-modal');
+  
+  // Set up precision buttons
+  setupPrecisionButtons();
+  
+  // Add first constraint by default
+  addReconConstraint();
+}
+
+function setupPrecisionButtons() {
+  const buttons = document.querySelectorAll('.recon-precision-btn');
+  const hint = document.getElementById('recon-precision-hint');
+  
+  const hintText = {
+    '20': 'Fast scan, may miss small areas',
+    '10': 'Normal speed, good accuracy',
+    '5': 'Slower, highest precision'
+  };
+  
+  buttons.forEach(btn => {
+    btn.onclick = () => {
+      // Remove active class from all
+      buttons.forEach(b => {
+        b.style.border = '1px solid var(--border)';
+        b.classList.remove('active');
+      });
+      
+      // Add active class to clicked
+      btn.style.border = '2px solid #60a5fa';
+      btn.classList.add('active');
+      
+      // Update precision value
+      reconPrecision = parseInt(btn.dataset.precision);
+      hint.textContent = hintText[btn.dataset.precision];
+      
+      console.log('Recon precision set to:', reconPrecision, 'm');
+    };
+  });
+}
+
+function closeReconModal() {
+  const modal = document.getElementById('recon-modal');
+  modal.classList.remove('visible');
+  document.getElementById('app').classList.remove('blocked-by-modal');
+  
+  reconConstraints = [];
+  currentReconCircle = null;
+  document.getElementById('recon-constraints').innerHTML = '';
+  document.getElementById('recon-status').textContent = '';
+}
+
+function addReconConstraint() {
+  const container = document.getElementById('recon-constraints');
+  const index = reconConstraints.length;
+  
+  const constraint = {
+    type: 'LAMP_POST',
+    min: 100,
+    max: 105,
+    radius: 350
+  };
+  
+  reconConstraints.push(constraint);
+  
+  const row = document.createElement('div');
+  row.style.cssText = 'padding:12px;background:rgba(0,0,0,0.2);border-radius:8px;border:1px solid var(--border);';
+  row.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <div style="font-weight:700;color:#60a5fa;">Constraint ${index + 1}</div>
+      <button class="btn small danger" onclick="removeReconConstraint(${index})" style="padding:4px 8px;">✕</button>
+    </div>
+    <div style="display:grid;gap:8px;">
+      <div>
+        <label class="hint" style="display:block;margin-bottom:4px;">Infrastructure Type</label>
+        <select onchange="updateReconConstraint(${index}, 'type', this.value)" style="width:100%;padding:6px;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);">
+          <option value="LAMP_POST">💡 Lamp Posts</option>
+          <option value="HDB">🏢 HDB Blocks</option>
+          <option value="AED">➕ AEDs</option>
+          <option value="BUS_STOP">🚌 Bus Stops</option>
+          <option value="NO_ENTRY">🚫 No-Entry Signs</option>
+          <option value="SLOW">🌀 Slow Signs</option>
+          <option value="STOP">🛑 Stop Signs</option>
+        </select>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+        <div>
+          <label class="hint" style="display:block;margin-bottom:4px;">Min Count</label>
+          <input type="number" value="100" min="0" onchange="updateReconConstraint(${index}, 'min', parseInt(this.value))" style="width:100%;padding:6px;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);">
+        </div>
+        <div>
+          <label class="hint" style="display:block;margin-bottom:4px;">Max Count</label>
+          <input type="number" value="105" min="0" onchange="updateReconConstraint(${index}, 'max', parseInt(this.value))" style="width:100%;padding:6px;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);">
+        </div>
+        <div>
+          <label class="hint" style="display:block;margin-bottom:4px;">Radius (m)</label>
+          <input type="number" value="350" min="1" onchange="updateReconConstraint(${index}, 'radius', parseInt(this.value))" style="width:100%;padding:6px;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);">
+        </div>
+      </div>
+    </div>
+  `;
+  
+  container.appendChild(row);
+}
+
+function removeReconConstraint(index) {
+  reconConstraints.splice(index, 1);
+  renderReconConstraints();
+}
+
+function updateReconConstraint(index, field, value) {
+  if (reconConstraints[index]) {
+    reconConstraints[index][field] = value;
+  }
+}
+
+function renderReconConstraints() {
+  const container = document.getElementById('recon-constraints');
+  container.innerHTML = '';
+  
+  const temp = [...reconConstraints];
+  reconConstraints = [];
+  
+  temp.forEach((c) => {
+    addReconConstraint();
+    const idx = reconConstraints.length - 1;
+    reconConstraints[idx] = c;
+    
+    // Update the form values
+    const row = container.children[idx];
+    row.querySelector('select').value = c.type;
+    row.querySelectorAll('input')[0].value = c.min;
+    row.querySelectorAll('input')[1].value = c.max;
+    row.querySelectorAll('input')[2].value = c.radius;
+  });
+}
+
+async function revealReconLocations() {
+  if (!currentReconCircle || reconConstraints.length === 0) {
+    alert('No constraints defined.');
+    return;
+  }
+  
+  const status = document.getElementById('recon-status');
+  const revealBtn = document.getElementById('recon-reveal');
+  
+  status.textContent = '⏳ Loading data and analyzing...';
+  revealBtn.disabled = true;
+  revealBtn.textContent = '⏳ Analyzing...';
+  
+  try {
+    // Fetch all required datasets (with caching)
+    const w = window;
+
+    // Initialise caches if needed
+    w.__LAMPPOST_CACHE_PROMISE =
+      w.__LAMPPOST_CACHE_PROMISE || fetchDataGovGeoJson('d_ca109de3e83efdd9a10bc5f3dda70a98', 'Lamp Post');
+    w.__HDB_CACHE_PROMISE =
+      w.__HDB_CACHE_PROMISE || fetchDataGovGeoJson('d_16b157c52ed637edd6ba1232e026258d', 'HDB');
+    w.__AED_CACHE_PROMISE =
+      w.__AED_CACHE_PROMISE || fetchDataGovGeoJson('d_4e6b82c58a8a832f6838f82003972d933d5', 'AED');
+    w.__BUS_CACHE_PROMISE =
+      w.__BUS_CACHE_PROMISE || fetchDataGovGeoJson('d_3f172c6feb3f4f92a2f47d93eed2908a', 'Bus Stop');
+    w.__TRAFFIC_SIGN_CACHE_PROMISE =
+      w.__TRAFFIC_SIGN_CACHE_PROMISE || fetchDataGovGeoJson('d_bbf0132c7290d6838f82003972d933d5', 'Traffic Sign');
+
+    const datasets = await Promise.all([
+      w.__LAMPPOST_CACHE_PROMISE,
+      w.__HDB_CACHE_PROMISE,
+      w.__AED_CACHE_PROMISE,
+      w.__BUS_CACHE_PROMISE,
+      w.__TRAFFIC_SIGN_CACHE_PROMISE
+    ]);
+    
+    const [lampData, hdbData, aedData, busData, trafficData] = datasets;
+
+    
+    // Create search circle polygon
+    const searchCircle = turf.circle(
+      currentReconCircle.center,
+      currentReconCircle.radius,
+      { steps: 24, units: 'meters' }
+    );
+    
+    // Generate grid based on selected precision
+    const bbox = turf.bbox(searchCircle);
+    const metersPerDegree = 111320;
+    const cellSizeKm = reconPrecision / 1000;
+    const grid = turf.pointGrid(bbox, cellSizeKm, { units: 'kilometers' });
+    
+    // Filter to only points inside the search circle
+    const testPoints = grid.features.filter(pt => 
+      turf.booleanPointInPolygon(pt, searchCircle)
+    );
+    
+    status.textContent = `🔍 Testing ${testPoints.length} locations at ${reconPrecision}m spacing...`;
+    
+    // Test each point against all constraints
+    const matchingPoints = [];
+    
+    for (const testPt of testPoints) {
+      let allMatch = true;
+      
+      for (const constraint of reconConstraints) {
+        const testCircle = turf.circle(
+          testPt.geometry.coordinates,
+          constraint.radius,
+          { steps: 32, units: 'meters' }
+        );
+        
+        let count = 0;
+        
+        // Count based on type
+        switch (constraint.type) {
+          case 'LAMP_POST':
+            if (lampData) count = countInCircle(lampData, testCircle);
+            break;
+          case 'HDB':
+            if (hdbData) count = countInCircle(hdbData, testCircle);
+            break;
+          case 'AED':
+            if (aedData) count = countInCircle(aedData, testCircle);
+            break;
+          case 'BUS_STOP':
+            if (busData) count = countInCircle(busData, testCircle);
+            break;
+          case 'NO_ENTRY':
+            if (trafficData) count = countTrafficSigns(trafficData, testCircle, 'NO_ENTRY');
+            break;
+          case 'SLOW':
+            if (trafficData) count = countTrafficSigns(trafficData, testCircle, 'SLOW');
+            break;
+          case 'STOP':
+            if (trafficData) count = countTrafficSigns(trafficData, testCircle, 'STOP');
+            break;
+        }
+        
+        if (count < constraint.min || count > constraint.max) {
+          allMatch = false;
+          break;
+        }
+      }
+      
+      if (allMatch) {
+        matchingPoints.push(testPt);
+      }
+    }
+    
+    status.textContent = `✅ Found ${matchingPoints.length} matching locations`;
+    
+    if (matchingPoints.length === 0) {
+      alert('No locations found matching all constraints.');
+    } else {
+      // Render matching areas on map
+      renderReconOverlay(matchingPoints);
+    }
+    
+  } catch (error) {
+    console.error('Recon analysis failed:', error);
+    status.textContent = '❌ Analysis failed';
+    alert('Failed to analyze locations: ' + error.message);
+  } finally {
+    revealBtn.disabled = false;
+    revealBtn.textContent = '🔍 Reveal Locations';
+  }
+}
+
+function countInCircle(dataset, circle) {
+  if (!dataset || !Array.isArray(dataset.features)) return 0;
+  
+  let count = 0;
+  for (const f of dataset.features) {
+    const pt = getGeometryPoint(f.geometry);
+    if (pt && turf.booleanPointInPolygon(pt, circle)) {
+      count++;
+    }
+  }
+  return count;
+}
+
+function countTrafficSigns(dataset, circle, category) {
+  if (!dataset || !Array.isArray(dataset.features)) return 0;
+  
+  let count = 0;
+  for (const f of dataset.features) {
+    if (f.geometry?.type !== 'Point') continue;
+    
+    const coords = f.geometry.coordinates;
+    const pt = turf.point(coords);
+    
+    if (turf.booleanPointInPolygon(pt, circle)) {
+      const cat = extractTrafficSignCategory(f);
+      if (cat === category) count++;
+    }
+  }
+  return count;
+}
+
+function renderReconOverlay(points) {
+  console.log('[Recon] Rendering overlay with', points.length, 'points');
+  
+  // Clear old overlay first
+  clearReconOverlay();
+  
+  if (!points.length) {
+    console.log('[Recon] No points to render');
+    return;
+  }
+  
+  // Create buffer polygons around each point (5m radius for visualization)
+  const polygons = points.map(pt => 
+    turf.circle(pt.geometry.coordinates, 5, { steps: 16, units: 'meters' })
+  );
+  
+  const fc = {
+    type: 'FeatureCollection',
+    features: polygons
+  };
+  
+  // ------------ MapLibre GL ------------
+  if (typeof mapgl !== 'undefined' && mapgl && mapgl.addSource && engine === 'gl') {
+    try {
+      console.log('[Recon] Rendering on MapLibre GL');
+      
+      if (!mapgl.getSource(RECON_OVERLAY_SOURCE)) {
+        mapgl.addSource(RECON_OVERLAY_SOURCE, {
+          type: 'geojson',
+          data: fc
+        });
+      } else {
+        mapgl.getSource(RECON_OVERLAY_SOURCE).setData(fc);
+      }
+      
+      if (!mapgl.getLayer(RECON_OVERLAY_LAYER)) {
+        mapgl.addLayer({
+          id: RECON_OVERLAY_LAYER,
+          type: 'fill',
+          source: RECON_OVERLAY_SOURCE,
+          paint: {
+            'fill-color': '#22c55e',
+            'fill-opacity': 0.25
+          }
+        });
+      }
+    } catch (e) {
+      console.error('[Recon] Failed to render on MapLibre:', e);
+    }
+  }
+  
+  // ------------ Leaflet ------------
+  if (typeof mapleaf !== 'undefined' && mapleaf && typeof L !== 'undefined' && L && engine === 'leaf') {
+    console.log('[Recon] Rendering on Leaflet');
+    
+    try {
+      const layers = polygons.map(poly => {
+        const coords = poly.geometry.coordinates[0].map(c => [c[1], c[0]]); // flip to lat,lng
+        return L.polygon(coords, {
+          color: '#22c55e',
+          fillColor: '#22c55e',
+          fillOpacity: 0.25,
+          weight: 1
+        });
+      });
+      
+      leafletReconLayer = L.layerGroup(layers).addTo(mapleaf);
+    } catch (e) {
+      console.error('[Recon] Failed to render on Leaflet:', e);
+    }
+  }
+}
+
+function clearReconOverlay() {
+  console.log('[Recon] Clearing existing overlay');
+  
+  // MapLibre GL
+  if (mapgl && mapgl.getSource) {
+    try {
+      if (mapgl.getLayer(RECON_OVERLAY_LAYER)) {
+        mapgl.removeLayer(RECON_OVERLAY_LAYER);
+      }
+      if (mapgl.getSource(RECON_OVERLAY_SOURCE)) {
+        mapgl.removeSource(RECON_OVERLAY_SOURCE);
+      }
+    } catch (e) {
+      console.warn('[Recon] Failed to clear GL overlay:', e);
+    }
+  }
+  
+  // Leaflet
+  if (typeof mapleaf !== 'undefined' && mapleaf && leafletReconLayer) {
+    try {
+      mapleaf.removeLayer(leafletReconLayer);
+    } catch (e) {
+      console.warn('[Recon] Failed to clear Leaflet overlay:', e);
+    }
+    leafletReconLayer = null;
+  }
+}
+
+// Event listeners
+document.getElementById('recon-add-constraint')?.addEventListener('click', addReconConstraint);
+document.getElementById('recon-reveal')?.addEventListener('click', revealReconLocations);
+document.getElementById('recon-close')?.addEventListener('click', closeReconModal);
+document.getElementById('recon-modal')?.addEventListener('click', (e) => {
+  if (e.target.id === 'recon-modal') closeReconModal();
+});
+
+
 /* ====================== GOOGLE SHEETS INTEGRATION ====================== */
 const sheetsBtn = byId('sheets-btn');
 const sheetsView = byId('sheets-view');
@@ -4585,8 +5111,6 @@ sheetsModal.addEventListener('click', (e)=>{
 });
 
 
-
-/* ================= Startup ================= */
 /* ================= Startup ================= */
 window.addEventListener('DOMContentLoaded', ()=>{
   try{
