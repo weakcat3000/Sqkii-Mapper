@@ -698,19 +698,20 @@ a{color:var(--accent)}
 <div id="recon-modal" class="modal">
   <div class="modal-card" style="max-width:600px;width:94%;max-height:90vh;overflow-y:auto;">
     <h3 style="margin-bottom:8px">🎯 Recon for the Coin - Find Exact Locations</h3>
-    <small class="hint">Search for locations within the circle that matches the selected constrants. WARNING: Reconing a big circle will take very long and may even crash the browser.</small>
+    <small class="hint">Search for locations within the circle that match specific criteria.</small>
     
     <div style="margin-top:12px;padding:10px;background:rgba(96,165,250,0.1);border-radius:8px;border:1px solid rgba(96,165,250,0.3);">
-      <label class="hint" style="display:block;margin-bottom:6px;font-weight:800;">Scan Precision (SELECT FAST MODE FOR BIG CIRCLES)</label>
+      <label class="hint" style="display:block;margin-bottom:6px;font-weight:700;">Scan Precision</label>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">
         <button class="recon-precision-btn" data-precision="25" style="padding:6px;background:var(--chip);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;color:#ffffff;">
-          ⚡ Fast<br><span style="font-size:11px;opacity:0.7;color:#ffffff;">~25m spacing</span>
+          ⚡ Fast<br><span style="font-size:10px;opacity:0.7;color:#ffffff;">~25m spacing</span>
         </button>
         <button class="recon-precision-btn active" data-precision="15" style="padding:6px;background:var(--chip);border:2px solid #60a5fa;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;color:#ffffff;">
-          ⚖️ Normal<br><span style="font-size:11px;opacity:0.7;color:#ffffff;">~15m spacing</span>
+          ⚖️ Normal<br><span style="font-size:10px;opacity:0.7;color:#ffffff;">~15m spacing</span>
         </button>
         <button class="recon-precision-btn" data-precision="8" style="padding:6px;background:var(--chip);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;color:#ffffff;">
-          🎯 Precise<br><span style="font-size:11px;opacity:0.7;color:#ffffff;">~8m spacing</span>
+          🎯 Precise<br><span style="font-size:10px;opacity:0.7;color:#ffffff;">~8m spacing</span>
+        
         </button>
       </div>
       <div class="hint" style="margin-top:4px;font-size:11px;text-align:center;">
@@ -4529,7 +4530,7 @@ scanNow.addEventListener('click', async ()=>{
 
 let reconConstraints = [];
 let currentReconCircle = null;
-let reconPrecision = 10; // Default: 10m spacing
+let reconPrecision = 15; // Default: 15m spacing
 const RECON_OVERLAY_SOURCE = 'recon-overlay-src';
 const RECON_OVERLAY_LAYER = 'recon-overlay-layer';
 let leafletReconLayer = null;
@@ -4557,9 +4558,9 @@ function setupPrecisionButtons() {
   const hint = document.getElementById('recon-precision-hint');
   
   const hintText = {
-    '20': 'Fast scan, may miss small areas',
-    '10': 'Normal speed, good accuracy',
-    '5': 'Slower, highest precision'
+    '25': 'Fast scan, may miss small areas',
+    '15': 'Normal speed, good accuracy',
+    '8': 'Slower, highest precision'
   };
   
   buttons.forEach(btn => {
