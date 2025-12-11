@@ -336,6 +336,29 @@ a{color:var(--accent)}
 .scan-wait.visible{display:flex}
 .pulse{width:10px;height:10px;border-radius:999px;background:var(--accent);box-shadow:0 0 0 0 rgba(96,165,250,.7);animation:pulse 1s infinite}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(96,165,250,.7)}70%{box-shadow:0 0 0 18px rgba(96,165,250,0)}100%{box-shadow:0 0 0 0 rgba(96,165,250,0)}}
+/* Recon loading spinner */
+@keyframes recon-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.recon-spinner {
+  display: inline-block;
+  animation: recon-spin 0.8s linear infinite;
+}
+
+#recon-status.loading::before {
+  content: '⏳';
+  display: inline-block;
+  margin-right: 4px;
+  animation: recon-spin 0.8s linear infinite;
+}
+
+#recon-reveal.loading {
+  opacity: 0.8;
+  cursor: wait;
+}
+
 
 
 /* Map controls */
@@ -703,16 +726,16 @@ a{color:var(--accent)}
     <div style="margin-top:12px;padding:10px;background:rgba(96,165,250,0.1);border-radius:8px;border:1px solid rgba(96,165,250,0.3);">
       <label class="hint" style="display:block;margin-bottom:6px;font-weight:700;">Scan Precision</label>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">
-        <button class="recon-precision-btn" data-precision="25" style="padding:6px;background:var(--chip);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;color:#ffffff;">
-          ⚡ Fast<br><span style="font-size:10px;opacity:0.7;color:#ffffff;">~25m spacing</span>
+                <button class="recon-precision-btn" data-precision="30" style="padding:6px;background:var(--chip);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;color:#ffffff;">
+          ⚡ Fast<br><span style="font-size:10px;opacity:0.7;color:#ffffff;">~30m spacing</span>
         </button>
-        <button class="recon-precision-btn active" data-precision="15" style="padding:6px;background:var(--chip);border:2px solid #60a5fa;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;color:#ffffff;">
-          ⚖️ Normal<br><span style="font-size:10px;opacity:0.7;color:#ffffff;">~15m spacing</span>
+        <button class="recon-precision-btn active" data-precision="20" style="padding:6px;background:var(--chip);border:2px solid #60a5fa;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;color:#ffffff;">
+          ⚖️ Normal<br><span style="font-size:10px;opacity:0.7;color:#ffffff;">~20m spacing</span>
         </button>
-        <button class="recon-precision-btn" data-precision="8" style="padding:6px;background:var(--chip);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;color:#ffffff;">
-          🎯 Precise<br><span style="font-size:10px;opacity:0.7;color:#ffffff;">~8m spacing</span>
+        <button class="recon-precision-btn" data-precision="10" style="padding:6px;background:var(--chip);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;color:#ffffff;">
+          🎯 Precise<br><span style="font-size:10px;opacity:0.7;color:#ffffff;">~10m spacing</span>
+        </button>
         
-        </button>
       </div>
       <div class="hint" style="margin-top:4px;font-size:11px;text-align:center;">
         <span id="recon-precision-hint">Normal speed, good accuracy</span>
@@ -3164,31 +3187,51 @@ let seReconCoin = null;
 
 
 
-seDelete.addEventListener('click', ()=>{
-  if(!editCtx) return;
-  const {entry,fid}=editCtx;
-  
-  // Close popup if it's for the feature being deleted
-  closeActivePopup();
-  clearReconOverlay();
-  
-  const ix = entry.data.features.findIndex(x=>x.properties.fid===fid);
-  if(ix<0) return;
-  const p = entry.data.features[ix].properties || {};
-  if(!confirm('Delete this feature?')) return;
+seDelete.addEventListener('click', () => {
+  if (!editCtx) return;
+  const { entry, fid } = editCtx;
 
-  entry.data.features.splice(ix,1);
+  // Are we deleting the circle that Recon is using?
+  const isReconCircle =
+    window.currentReconCircle &&
+    String(window.currentReconCircle.fid) === String(fid);
+
+  // Close any open popup for this feature
+  closeActivePopup();
+
+  // Only clear Recon dots if we are deleting the active Recon circle
+  if (isReconCircle) {
+    clearReconOverlay();
+    window.currentReconCircle = null;
+  }
+
+  const ix = entry.data.features.findIndex(x => x.properties.fid === fid);
+  if (ix < 0) return;
+  const p = entry.data.features[ix].properties || {};
+  if (!confirm('Delete this feature?')) return;
+
+  entry.data.features.splice(ix, 1);
   const key = p._gid || p.fid;
   entry.data.features.push({
-    type:'Feature',
-    geometry:{type:'Point',coordinates:[0,0]},
-    properties:{ fid:key, _gid:key, _deleted:true, _ts:Date.now(), name:p.name||'Deleted feature' }
+    type: 'Feature',
+    geometry: { type: 'Point', coordinates: [0, 0] },
+    properties: {
+      fid: key,
+      _gid: key,
+      _deleted: true,
+      _ts: Date.now(),
+      name: p.name || 'Deleted feature'
+    }
   });
   entry.items = rebuildItemsFromFeatures(entry.data.features);
 
-  refreshGroupBoth(entry); renderLayers(); renderGroupsVisibility(); saveState();
+  refreshGroupBoth(entry);
+  renderLayers();
+  renderGroupsVisibility();
+  saveState();
   closeStyleEditor();
 });
+
 
 function reflectEditUI(){
   if (!editToggle) return;
@@ -4530,7 +4573,7 @@ scanNow.addEventListener('click', async ()=>{
 
 let reconConstraints = [];
 let currentReconCircle = null;
-let reconPrecision = 15; // Default: 15m spacing
+let reconPrecision = 30; // Default: 30m spacing
 const RECON_OVERLAY_SOURCE = 'recon-overlay-src';
 const RECON_OVERLAY_LAYER = 'recon-overlay-layer';
 let leafletReconLayer = null;
@@ -4540,7 +4583,7 @@ function openReconModal(fid, center, radius) {
 
   currentReconCircle = { fid, center, radius };
   reconConstraints = [];
-  reconPrecision = 10; // Reset to default
+  reconPrecision = 30; // Reset to default
   
   const modal = document.getElementById('recon-modal');
   modal.classList.add('visible');
@@ -4558,9 +4601,9 @@ function setupPrecisionButtons() {
   const hint = document.getElementById('recon-precision-hint');
   
   const hintText = {
-    '25': 'Fast scan, may miss small areas',
-    '15': 'Normal speed, good accuracy',
-    '8': 'Slower, highest precision'
+    '30': 'Fast scan, may miss small areas',
+    '20': 'Normal speed, good accuracy',
+    '10': 'Slower, highest precision'
   };
   
   buttons.forEach(btn => {
@@ -4688,49 +4731,56 @@ async function revealReconLocations() {
   
   const status = document.getElementById('recon-status');
   const revealBtn = document.getElementById('recon-reveal');
-  
-  status.textContent = '⏳ Loading data and analyzing...';
+
+  // Turn on loading state
+  status.classList.add('loading');
+  status.textContent = 'Loading data and analyzing...';
+
   revealBtn.disabled = true;
-  revealBtn.textContent = '⏳ Analyzing...';
+  revealBtn.classList.add('loading');
+  revealBtn.innerHTML = '<span class="recon-spinner">⏳</span> Analyzing...';
   
   try {
-    // Fetch all required datasets (with caching)
+    // Fetch all required datasets
     const w = window;
-
-    // Initialise caches if needed
-    w.__LAMPPOST_CACHE_PROMISE =
-      w.__LAMPPOST_CACHE_PROMISE || fetchDataGovGeoJson('d_ca109de3e83efdd9a10bc5f3dda70a98', 'Lamp Post');
-    w.__HDB_CACHE_PROMISE =
-      w.__HDB_CACHE_PROMISE || fetchDataGovGeoJson('d_16b157c52ed637edd6ba1232e026258d', 'HDB');
-    w.__AED_CACHE_PROMISE =
-      w.__AED_CACHE_PROMISE || fetchDataGovGeoJson('d_4e6b82c58a8a832f6838f82003972d933d5', 'AED');
-    w.__BUS_CACHE_PROMISE =
-      w.__BUS_CACHE_PROMISE || fetchDataGovGeoJson('d_3f172c6feb3f4f92a2f47d93eed2908a', 'Bus Stop');
-    w.__TRAFFIC_SIGN_CACHE_PROMISE =
-      w.__TRAFFIC_SIGN_CACHE_PROMISE || fetchDataGovGeoJson('d_bbf0132c7290d6838f82003972d933d5', 'Traffic Sign');
-
     const datasets = await Promise.all([
-      w.__LAMPPOST_CACHE_PROMISE,
-      w.__HDB_CACHE_PROMISE,
-      w.__AED_CACHE_PROMISE,
-      w.__BUS_CACHE_PROMISE,
-      w.__TRAFFIC_SIGN_CACHE_PROMISE
+      w.__LAMPPOST_CACHE_PROMISE || fetchDataGovGeoJson('d_ca109de3e83efdd9a10bc5f3dda70a98', 'Lamp Post'),
+      w.__HDB_CACHE_PROMISE || fetchDataGovGeoJson('d_16b157c52ed637edd6ba1232e026258d', 'HDB'),
+      w.__AED_CACHE_PROMISE || fetchDataGovGeoJson('d_4e6b82c58a8a832f6838f82003972d933d5', 'AED'),
+      w.__BUS_CACHE_PROMISE || fetchDataGovGeoJson('d_3f172c6feb3f4f92a2f47d93eed2908a', 'Bus Stop'),
+      w.__TRAFFIC_SIGN_CACHE_PROMISE || fetchDataGovGeoJson('d_bbf0132c7290d6838f82003972d933d5', 'Traffic Sign')
     ]);
     
     const [lampData, hdbData, aedData, busData, trafficData] = datasets;
-
     
     // Create search circle polygon
     const searchCircle = turf.circle(
       currentReconCircle.center,
       currentReconCircle.radius,
-      { steps: 12, units: 'meters' }
+      { steps: 64, units: 'meters' }
     );
     
-    // Generate grid based on selected precision
+    // 🚀 ADAPTIVE GRID: Adjust spacing based on circle size
     const bbox = turf.bbox(searchCircle);
-    const metersPerDegree = 111320;
-    const cellSizeKm = reconPrecision / 1000;
+    const circleArea = turf.area(searchCircle); // in square meters
+    
+    let adaptivePrecision = reconPrecision;
+    
+    // If circle is large, automatically increase spacing to prevent crashes
+    if (circleArea > 1000000) { // > 1 km²
+      adaptivePrecision = Math.max(reconPrecision, 15);
+      console.log('Large circle detected, using adaptive precision:', adaptivePrecision);
+    }
+    if (circleArea > 5000000) { // > 5 km²
+      adaptivePrecision = Math.max(reconPrecision, 25);
+      console.log('Very large circle detected, using adaptive precision:', adaptivePrecision);
+    }
+    if (circleArea > 10000000) { // > 10 km²
+      adaptivePrecision = Math.max(reconPrecision, 40);
+      console.log('Extremely large circle detected, using adaptive precision:', adaptivePrecision);
+    }
+    
+    const cellSizeKm = adaptivePrecision / 1000;
     const grid = turf.pointGrid(bbox, cellSizeKm, { units: 'kilometers' });
     
     // Filter to only points inside the search circle
@@ -4738,60 +4788,92 @@ async function revealReconLocations() {
       turf.booleanPointInPolygon(pt, searchCircle)
     );
     
-    status.textContent = `🔍 Testing ${testPoints.length} locations at ${reconPrecision}m spacing...`;
-    
-    // Test each point against all constraints
-    const matchingPoints = [];
-    
-    for (const testPt of testPoints) {
-      let allMatch = true;
-      
-      for (const constraint of reconConstraints) {
-        const testCircle = turf.circle(
-          testPt.geometry.coordinates,
-          constraint.radius,
-          { steps: 32, units: 'meters' }
-        );
-        
-        let count = 0;
-        
-        // Count based on type
-        switch (constraint.type) {
-          case 'LAMP_POST':
-            if (lampData) count = countInCircle(lampData, testCircle);
-            break;
-          case 'HDB':
-            if (hdbData) count = countInCircle(hdbData, testCircle);
-            break;
-          case 'AED':
-            if (aedData) count = countInCircle(aedData, testCircle);
-            break;
-          case 'BUS_STOP':
-            if (busData) count = countInCircle(busData, testCircle);
-            break;
-          case 'NO_ENTRY':
-            if (trafficData) count = countTrafficSigns(trafficData, testCircle, 'NO_ENTRY');
-            break;
-          case 'SLOW':
-            if (trafficData) count = countTrafficSigns(trafficData, testCircle, 'SLOW');
-            break;
-          case 'STOP':
-            if (trafficData) count = countTrafficSigns(trafficData, testCircle, 'STOP');
-            break;
-        }
-        
-        if (count < constraint.min || count > constraint.max) {
-          allMatch = false;
-          break;
-        }
-      }
-      
-      if (allMatch) {
-        matchingPoints.push(testPt);
+    // Safety check: prevent analyzing too many points
+    const MAX_POINTS = 2000;
+    if (testPoints.length > MAX_POINTS) {
+      const ok = confirm(
+        `⚠️ This will test ${testPoints.length} locations (spacing: ${adaptivePrecision}m).\n\n` +
+        `This may take 120-360 seconds and could slow down your browser.\n\n` +
+        `Continue anyway?`
+      );
+      if (!ok) {
+        status.classList.remove('loading');
+        status.textContent = '❌ Cancelled';
+
+        revealBtn.disabled = false;
+        revealBtn.classList.remove('loading');
+        revealBtn.textContent = '🔍 Reveal Locations';
+        return;
       }
     }
     
-    status.textContent = `✅ Found ${matchingPoints.length} matching locations`;
+    status.textContent = `🔍 Testing ${testPoints.length} locations at ${adaptivePrecision}m spacing...`;
+    
+    // Test each point against all constraints (with progress updates)
+    const matchingPoints = [];
+    const batchSize = 50; // Process in batches to keep UI responsive
+    
+    for (let i = 0; i < testPoints.length; i += batchSize) {
+      const batch = testPoints.slice(i, i + batchSize);
+      
+      // Process batch
+      for (const testPt of batch) {
+        let allMatch = true;
+        
+        for (const constraint of reconConstraints) {
+          const testCircle = turf.circle(
+            testPt.geometry.coordinates,
+            constraint.radius,
+            { steps: 32, units: 'meters' }
+          );
+          
+          let count = 0;
+          
+          // Count based on type
+          switch (constraint.type) {
+            case 'LAMP_POST':
+              if (lampData) count = countInCircle(lampData, testCircle);
+              break;
+            case 'HDB':
+              if (hdbData) count = countInCircle(hdbData, testCircle);
+              break;
+            case 'AED':
+              if (aedData) count = countInCircle(aedData, testCircle);
+              break;
+            case 'BUS_STOP':
+              if (busData) count = countInCircle(busData, testCircle);
+              break;
+            case 'NO_ENTRY':
+              if (trafficData) count = countTrafficSigns(trafficData, testCircle, 'NO_ENTRY');
+              break;
+            case 'SLOW':
+              if (trafficData) count = countTrafficSigns(trafficData, testCircle, 'SLOW');
+              break;
+            case 'STOP':
+              if (trafficData) count = countTrafficSigns(trafficData, testCircle, 'STOP');
+              break;
+          }
+          
+          if (count < constraint.min || count > constraint.max) {
+            allMatch = false;
+            break;
+          }
+        }
+        
+        if (allMatch) {
+          matchingPoints.push(testPt);
+        }
+      }
+      
+      // Update progress every batch
+      const progress = Math.min(100, Math.round(((i + batchSize) / testPoints.length) * 100));
+      status.textContent = `🔍 Progress: ${progress}% (${i + batchSize}/${testPoints.length} tested, ${matchingPoints.length} matches)`;
+      
+      // Yield to browser to keep UI responsive
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    
+    status.textContent = `✅ Found ${matchingPoints.length} matching locations (tested ${testPoints.length} points at ${adaptivePrecision}m spacing)`;
     
     if (matchingPoints.length === 0) {
       alert('No locations found matching all constraints.');
@@ -4805,7 +4887,9 @@ async function revealReconLocations() {
     status.textContent = '❌ Analysis failed';
     alert('Failed to analyze locations: ' + error.message);
   } finally {
+    status.classList.remove('loading');
     revealBtn.disabled = false;
+    revealBtn.classList.remove('loading');
     revealBtn.textContent = '🔍 Reveal Locations';
   }
 }
@@ -4815,9 +4899,35 @@ function countInCircle(dataset, circle) {
   
   let count = 0;
   for (const f of dataset.features) {
-    const pt = getGeometryPoint(f.geometry);
-    if (pt && turf.booleanPointInPolygon(pt, circle)) {
-      count++;
+    const geom = f.geometry;
+    if (!geom) continue;
+
+    try {
+      // For Points: check if inside circle
+      if (geom.type === 'Point') {
+        const coords = geom.coordinates || [];
+        const lng = parseFloat(coords[0]);
+        const lat = parseFloat(coords[1]);
+        if (!Number.isNaN(lng) && !Number.isNaN(lat)) {
+          const pt = turf.point([lng, lat]);
+          if (turf.booleanPointInPolygon(pt, circle)) {
+            count++;
+          }
+        }
+      } 
+      // For Polygons/MultiPolygons (HDB buildings): check if touches/intersects
+      else if (geom.type === 'Polygon' || geom.type === 'MultiPolygon') {
+        const buildingGeom = geom.type === 'Polygon'
+          ? turf.polygon(geom.coordinates)
+          : turf.multiPolygon(geom.coordinates);
+
+        // ✅ counts if the building footprint and circle share any point (even just touching)
+        if (turf.booleanIntersects(buildingGeom, circle)) {
+          count++;
+        }
+      }
+    } catch (e) {
+      console.warn('⚠️ Error handling feature geometry in countInCircle', e, f);
     }
   }
   return count;
@@ -4854,7 +4964,7 @@ function renderReconOverlay(points) {
   
   // Create buffer polygons around each point (5m radius for visualization)
   const polygons = points.map(pt => 
-    turf.circle(pt.geometry.coordinates, 5, { steps: 16, units: 'meters' })
+    turf.circle(pt.geometry.coordinates, 7, { steps: 12, units: 'meters' })
   );
   
   const fc = {
