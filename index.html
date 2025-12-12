@@ -4579,11 +4579,18 @@ const RECON_OVERLAY_LAYER = 'recon-overlay-layer';
 let leafletReconLayer = null;
 
 function openReconModal(fid, center, radius) {
-  clearReconOverlay();
-
+  // Password protection
+  const correctPassword = 'reconwk6482'; // Change this to your desired password
+  const enteredPassword = prompt('🔐 Enter password to use Recon Coin:');
+  
+  if (enteredPassword !== correctPassword) {
+    alert('❌ Incorrect password. Access denied.');
+    return;
+  }
+  
   currentReconCircle = { fid, center, radius };
   reconConstraints = [];
-  reconPrecision = 30; // Reset to default
+  reconPrecision = 10; // Reset to default
   
   const modal = document.getElementById('recon-modal');
   modal.classList.add('visible');
