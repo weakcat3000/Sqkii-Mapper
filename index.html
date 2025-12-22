@@ -4735,7 +4735,7 @@ async function revealReconLocations() {
     alert('No constraints defined.');
     return;
   }
-  
+
   const status = document.getElementById('recon-status');
   const revealBtn = document.getElementById('recon-reveal');
 
@@ -4746,33 +4746,38 @@ async function revealReconLocations() {
   revealBtn.disabled = true;
   revealBtn.classList.add('loading');
   revealBtn.innerHTML = '<span class="recon-spinner">⏳</span> Analyzing...';
-  
+
   try {
     // Fetch all required datasets
     const w = window;
-    const datasets = await Promise.all([
-      w.__LAMPPOST_CACHE_PROMISE || fetchDataGovGeoJson('d_ca109de3e83efdd9a10bc5f3dda70a98', 'Lamp Post'),
-      w.__HDB_CACHE_PROMISE || fetchDataGovGeoJson('d_16b157c52ed637edd6ba1232e026258d', 'HDB'),
-      w.__AED_CACHE_PROMISE || fetchDataGovGeoJson('d_4e6b82c58a8a832f6838f82003972d933d5', 'AED'),
-      w.__BUS_CACHE_PROMISE || fetchDataGovGeoJson('d_3f172c6feb3f4f92a2f47d93eed2908a', 'Bus Stop'),
-      w.__TRAFFIC_SIGN_CACHE_PROMISE || fetchDataGovGeoJson('d_bbf0132c7290d6838f82003972d933d5', 'Traffic Sign')
+
+    w.__LAMPPOST_CACHE_PROMISE = w.__LAMPPOST_CACHE_PROMISE || fetchDataGovGeoJson(DATASET_IDS.LAMP_POST, 'Lamp Post');
+    w.__HDB_CACHE_PROMISE      = w.__HDB_CACHE_PROMISE      || fetchDataGovGeoJson(DATASET_IDS.HDB, 'HDB');
+    w.__AED_CACHE_PROMISE      = w.__AED_CACHE_PROMISE      || fetchDataGovGeoJson(DATASET_IDS.AED, 'AED'); // ✅ FIX
+    w.__BUS_CACHE_PROMISE      = w.__BUS_CACHE_PROMISE      || fetchDataGovGeoJson(DATASET_IDS.BUS_STOP, 'Bus Stop');
+    w.__TRAFFIC_SIGN_CACHE_PROMISE = w.__TRAFFIC_SIGN_CACHE_PROMISE || fetchDataGovGeoJson(DATASET_IDS.TRAFFIC_SIGN, 'Traffic Sign');
+
+    const [lampData, hdbData, aedData, busData, trafficData] = await Promise.all([
+      w.__LAMPPOST_CACHE_PROMISE,
+      w.__HDB_CACHE_PROMISE,
+      w.__AED_CACHE_PROMISE,
+      w.__BUS_CACHE_PROMISE,
+      w.__TRAFFIC_SIGN_CACHE_PROMISE
     ]);
-    
-    const [lampData, hdbData, aedData, busData, trafficData] = datasets;
-    
+
     // Create search circle polygon
     const searchCircle = turf.circle(
       currentReconCircle.center,
       currentReconCircle.radius,
       { steps: 64, units: 'meters' }
     );
-    
+
     // 🚀 ADAPTIVE GRID: Adjust spacing based on circle size
     const bbox = turf.bbox(searchCircle);
     const circleArea = turf.area(searchCircle); // in square meters
-    
+
     let adaptivePrecision = reconPrecision;
-    
+
     // If circle is large, automatically increase spacing to prevent crashes
     if (circleArea > 1000000) { // > 1 km²
       adaptivePrecision = Math.max(reconPrecision, 15);
@@ -4786,15 +4791,15 @@ async function revealReconLocations() {
       adaptivePrecision = Math.max(reconPrecision, 40);
       console.log('Extremely large circle detected, using adaptive precision:', adaptivePrecision);
     }
-    
+
     const cellSizeKm = adaptivePrecision / 1000;
     const grid = turf.pointGrid(bbox, cellSizeKm, { units: 'kilometers' });
-    
+
     // Filter to only points inside the search circle
-    const testPoints = grid.features.filter(pt => 
+    const testPoints = grid.features.filter(pt =>
       turf.booleanPointInPolygon(pt, searchCircle)
     );
-    
+
     // Safety check: prevent analyzing too many points
     const MAX_POINTS = 2000;
     if (testPoints.length > MAX_POINTS) {
@@ -4813,29 +4818,35 @@ async function revealReconLocations() {
         return;
       }
     }
-    
+
     status.textContent = `🔍 Testing ${testPoints.length} locations at ${adaptivePrecision}m spacing...`;
-    
+
     // Test each point against all constraints (with progress updates)
     const matchingPoints = [];
-    const batchSize = 50; // Process in batches to keep UI responsive
-    
-    for (let i = 0; i < testPoints.length; i += batchSize) {
-      const batch = testPoints.slice(i, i + batchSize);
-      
-      // Process batch
-      for (const testPt of batch) {
+    let i = 0;
+
+    // How long to work before yielding (ms). 10–14 is a good range.
+    const timeSliceMs = 6;
+
+    while (i < testPoints.length) {
+      const start = performance.now();
+
+      // Process points for ~timeSliceMs, then yield to keep UI responsive
+      while (i < testPoints.length && (performance.now() - start) < timeSliceMs) {
+        const testPt = testPoints[i];
+        i++;
+
         let allMatch = true;
-        
+
         for (const constraint of reconConstraints) {
           const testCircle = turf.circle(
             testPt.geometry.coordinates,
             constraint.radius,
             { steps: 32, units: 'meters' }
           );
-          
+
           let count = 0;
-          
+
           // Count based on type
           switch (constraint.type) {
             case 'LAMP_POST':
@@ -4860,35 +4871,35 @@ async function revealReconLocations() {
               if (trafficData) count = countTrafficSigns(trafficData, testCircle, 'STOP');
               break;
           }
-          
+
           if (count < constraint.min || count > constraint.max) {
             allMatch = false;
             break;
           }
         }
-        
+
         if (allMatch) {
           matchingPoints.push(testPt);
         }
       }
-      
-      // Update progress every batch
-      const progress = Math.min(100, Math.round(((i + batchSize) / testPoints.length) * 100));
-      status.textContent = `🔍 Progress: ${progress}% (${i + batchSize}/${testPoints.length} tested, ${matchingPoints.length} matches)`;
-      
+
+      // Update progress after each time slice
+      const progress = Math.min(100, Math.round((i / testPoints.length) * 100));
+      status.textContent = `🔍 Progress: ${progress}% (${i}/${testPoints.length} tested, ${matchingPoints.length} matches)`;
+
       // Yield to browser to keep UI responsive
-      await new Promise(resolve => setTimeout(resolve, 0));
+      await new Promise(resolve => requestAnimationFrame(resolve));
     }
-    
+
     status.textContent = `✅ Found ${matchingPoints.length} matching locations (tested ${testPoints.length} points at ${adaptivePrecision}m spacing)`;
-    
+
     if (matchingPoints.length === 0) {
       alert('No locations found matching all constraints.');
     } else {
       // Render matching areas on map
       renderReconOverlay(matchingPoints);
     }
-    
+
   } catch (error) {
     console.error('Recon analysis failed:', error);
     status.textContent = '❌ Analysis failed';
@@ -4900,6 +4911,7 @@ async function revealReconLocations() {
     revealBtn.textContent = '🔍 Reveal Locations';
   }
 }
+
 
 function countInCircle(dataset, circle) {
   if (!dataset || !Array.isArray(dataset.features)) return 0;
@@ -5276,6 +5288,7 @@ byId('export-kml').onclick=()=>{ const kml=exportKMLString(); downloadBlob('sqki
 byId('export-kmz').onclick=async()=>{ const zip=new JSZip(); const kml=exportKMLString(); zip.file('doc.kml', kml); const blob=await zip.generateAsync({type:'blob'}); downloadBlob('sqkii-export.kmz', blob); };
 
 
+
 /* ================= Circle Statistics Helper Functions ================= */
 
 function getGeometryPoint(geometry) {
@@ -5283,21 +5296,18 @@ function getGeometryPoint(geometry) {
 
   try {
     if (geometry.type === 'Point') {
-      // [lng, lat]
-      return turf.point(geometry.coordinates);
+      return turf.point(geometry.coordinates); // [lng, lat]
     }
 
     if (geometry.type === 'Polygon') {
       const poly = turf.polygon(geometry.coordinates);
-      return turf.centroid(poly); // representative point
+      return turf.centroid(poly);
     }
 
     if (geometry.type === 'MultiPolygon') {
       const mpoly = turf.multiPolygon(geometry.coordinates);
       return turf.centroid(mpoly);
     }
-
-    // You can add more geometry types here if needed
   } catch (e) {
     console.warn('⚠️ Failed to build point from geometry', geometry, e);
   }
@@ -5309,16 +5319,11 @@ function countFeaturesInCircle(featureCollection, circlePolygon) {
   if (!featureCollection || !Array.isArray(featureCollection.features)) return 0;
 
   let count = 0;
-
   for (const f of featureCollection.features) {
     const pt = getGeometryPoint(f.geometry);
     if (!pt) continue;
-
-    if (turf.booleanPointInPolygon(pt, circlePolygon)) {
-      count++;
-    }
+    if (turf.booleanPointInPolygon(pt, circlePolygon)) count++;
   }
-
   return count;
 }
 
@@ -5339,15 +5344,10 @@ function extractTrafficSignCategory(feature) {
   const props = feature && feature.properties ? feature.properties : {};
   let typ = '';
 
-  // 1) Prefer explicit TYP_CD fields if present
-  if (props.TYP_CD != null) {
-    typ = String(props.TYP_CD).toUpperCase();
-  } else if (props.typ_cd != null) {
-    typ = String(props.typ_cd).toUpperCase();
-  } else if (props.TYP != null) {
-    typ = String(props.TYP).toUpperCase();
-  } else if (props.Description) {
-    // 2) Fallback for older KML-style Description HTML
+  if (props.TYP_CD != null) typ = String(props.TYP_CD).toUpperCase();
+  else if (props.typ_cd != null) typ = String(props.typ_cd).toUpperCase();
+  else if (props.TYP != null) typ = String(props.TYP).toUpperCase();
+  else if (props.Description) {
     const desc = String(props.Description);
     const match = desc.match(/<th>\s*TYP_CD\s*<\/th>\s*<td>(.*?)<\/td>/i);
     const typCdRaw = match ? match[1] : '';
@@ -5355,79 +5355,96 @@ function extractTrafficSignCategory(feature) {
   }
 
   if (!typ) return null;
-
   if (typ.includes('NO ENTRY')) return 'NO_ENTRY';
   if (typ.includes('SLOW')) return 'SLOW';
   if (typ.includes('STOP')) return 'STOP';
-
-  return null; // other sign types we don’t care about here
+  return null;
 }
 
+/* ================= data.gov.sg fetch via your Worker ONLY ================= */
 
-// Fetch a GeoJSON FeatureCollection from data.gov.sg "poll-download" API
-async function fetchDataGovGeoJson(datasetId) {
+// Your Cloudflare Worker base
+const WORKER_BASE = "https://sqkiimapper.wk-yeow-2024.workers.dev/?url=";
+
+// Dataset IDs
+const DATASET_IDS = {
+  HDB: "d_16b157c52ed637edd6ba1232e026258d",
+  AED: "d_4e6b82c58a8a832f6f1fee5dfa6d47ea",
+  BUS_STOP: "d_3f172c6feb3f4f92a2f47d93eed2908a",
+  LAMP_POST: "d_ca109de3e83efdd9a10bc5f3dda70a98",
+  TRAFFIC_SIGN: "d_bbf0132c7290d6838f82003972d933d5",
+};
+
+function workerProxy(url) {
+  return WORKER_BASE + encodeURIComponent(url);
+}
+
+// ALWAYS uses Worker for both poll-download and dataset download
+async function fetchDataGovGeoJson(datasetId, label = '') {
   const pollUrl = `https://api-open.data.gov.sg/v1/public/api/datasets/${datasetId}/poll-download`;
 
   try {
-    console.log('🌐 Polling data.gov.sg for dataset', datasetId, pollUrl);
+    console.log(`🌐 [${label || datasetId}] poll-download via Worker:`, pollUrl);
 
-    const pollResp = await fetch(
-      `https://corsproxy.io/?${encodeURIComponent(pollUrl)}`
-    );
-    console.log('📥 poll-download status:', pollResp.status);
+    const pollResp = await fetch(workerProxy(pollUrl));
+    console.log(`📥 [${label || datasetId}] poll status:`, pollResp.status);
 
-    const pollJson = await pollResp.json();
-    console.log('📊 poll-download payload:', pollJson);
-
-    // Some datasets might return GeoJSON directly from poll-download
-    if (pollJson && pollJson.type === 'FeatureCollection' && Array.isArray(pollJson.features)) {
-      console.log('✅ poll-download already returned a FeatureCollection');
-      return pollJson;
-    }
-
-    // Normal case: poll-download returns a wrapper with data.url
-    if (!pollJson || pollJson.code !== 0 || !pollJson.data || !pollJson.data.url) {
-      console.warn('⚠️ Unexpected poll-download response for', datasetId, pollJson);
+    if (!pollResp.ok) {
+      console.warn(`⚠️ [${label || datasetId}] poll HTTP error`, pollResp.status);
       return null;
     }
 
-    const downloadUrl = pollJson.data.url;
-    console.log('⬇️ Downloading actual data file:', downloadUrl);
+    const pollJson = await pollResp.json();
+    console.log(`📊 [${label || datasetId}] poll payload:`, pollJson);
 
-    const dataResp = await fetch(
-      `https://corsproxy.io/?${encodeURIComponent(downloadUrl)}`
-    );
-    console.log('📥 data file status:', dataResp.status);
+    // Sometimes poll-download returns GeoJSON directly
+    if (pollJson && pollJson.type === 'FeatureCollection' && Array.isArray(pollJson.features)) {
+      console.log(`✅ [${label || datasetId}] poll returned FeatureCollection directly`);
+      return pollJson;
+    }
+
+    const downloadUrl = pollJson?.data?.url;
+    if (!downloadUrl) {
+      console.warn(`⚠️ [${label || datasetId}] missing data.url`, pollJson);
+      return null;
+    }
+
+    console.log(`⬇️ [${label || datasetId}] downloading via Worker:`, downloadUrl);
+
+    // ✅ Big file also goes through Worker (no corsproxy.io, no 1MB limit)
+    const dataResp = await fetch(workerProxy(downloadUrl));
+    console.log(`📥 [${label || datasetId}] data status:`, dataResp.status);
+
+    if (!dataResp.ok) {
+      console.warn(`⚠️ [${label || datasetId}] data HTTP error`, dataResp.status);
+      return null;
+    }
 
     const dataJson = await dataResp.json();
-    console.log('📦 Parsed data file:', dataJson);
 
     if (!dataJson || dataJson.type !== 'FeatureCollection' || !Array.isArray(dataJson.features)) {
-      console.warn('⚠️ Expected GeoJSON FeatureCollection for', datasetId, dataJson);
+      console.warn(`⚠️ [${label || datasetId}] not a FeatureCollection`, dataJson);
       return null;
     }
 
     return dataJson;
   } catch (e) {
-    console.error('❌ fetchDataGovGeoJson failed for dataset', datasetId, e);
+    console.error(`❌ [${label || datasetId}] fetchDataGovGeoJson failed`, e);
     return null;
   }
 }
 
 /* =========== GLIMPSE TRAFFIC SIGNS OVERLAY =========== */
 
-// Define the missing constants
 const GLIMPSE_SIGNS_SOURCE_ID = 'glimpse-traffic-signs-src';
 const GLIMPSE_SIGNS_LAYER_ID  = 'glimpse-traffic-signs-layer';
 
-// Keep the old names for backward compatibility
 const GLIMPSE_TS_SOURCE_ID   = GLIMPSE_SIGNS_SOURCE_ID;
 const GLIMPSE_TS_LAYER_STOP  = 'glimpse-traffic-signs-stop';
 const GLIMPSE_TS_LAYER_SLOW  = 'glimpse-traffic-signs-slow';
 const GLIMPSE_TS_LAYER_NOENTRY = 'glimpse-traffic-signs-noentry';
 
 let leafletGlimpseLayer = null;
-
 
 async function loadCircleStatistics(fid, center, radiusMeters) {
   console.log('🔍 Starting statistics calculation...', { fid, center, radiusMeters });
@@ -5449,14 +5466,8 @@ async function loadCircleStatistics(fid, center, radiusMeters) {
   }
 
   try {
-    // Build Turf.js circle polygon in meters
-    const circlePolygon = turf.circle(center, radiusMeters, {
-      steps: 64,
-      units: 'meters'
-    });
-    console.log('✅ Circle polygon created for stats');
+    const circlePolygon = turf.circle(center, radiusMeters, { steps: 64, units: 'meters' });
 
-    // --- counters ---
     let hdbCount = 0;
     let aedCount = 0;
     let busStopCount = 0;
@@ -5465,271 +5476,141 @@ async function loadCircleStatistics(fid, center, radiusMeters) {
     let slowSignCount = 0;
     let stopSignCount = 0;
 
-// Dataset IDs on data.gov.sg (GeoJSON via poll-download)
-    const HDB_DATASET_ID = 'd_16b157c52ed637edd6ba1232e026258d';  // HDB Existing Building
-    const AED_DATASET_ID = 'd_4e6b82c58a8a832f6f1fee5dfa6d47ea';  // Public Access AEDs
-    const BUS_DATASET_ID = 'd_3f172c6feb3f4f92a2f47d93eed2908a';  // LTA Bus Stops
-    const LAMPPOST_DATASET_ID = 'd_ca109de3e83efdd9a10bc5f3dda70a98'; // Lamp Posts
-    const TRAFFIC_DATASET_ID = 'd_bbf0132c7290d6838f82003972d933d5'; // LTA Traffic Sign
-
-    // Helper: poll-download then fetch the actual GeoJSON
-    async function fetchDataGovGeoJson(datasetId, label) {
-      const pollUrl = `https://api-open.data.gov.sg/v1/public/api/datasets/${datasetId}/poll-download`;
-
-      try {
-        console.log(`📡 [${label}] poll-download:`, pollUrl);
-        const pollResp = await fetch(`https://corsproxy.io/?${encodeURIComponent(pollUrl)}`);
-        console.log(`📥 [${label}] poll status:`, pollResp.status);
-        const pollJson = await pollResp.json();
-        console.log(`📊 [${label}] poll json:`, pollJson);
-
-        // Some datasets might return GeoJSON directly
-        if (pollJson && pollJson.type === 'FeatureCollection' && Array.isArray(pollJson.features)) {
-          return pollJson;
-        }
-
-        if (!pollJson || pollJson.code !== 0 || !pollJson.data || !pollJson.data.url) {
-          console.warn(`⚠️ [${label}] unexpected poll-download response`, pollJson);
-          return null;
-        }
-
-        const dataUrl = pollJson.data.url;
-        console.log(`⬇️ [${label}] downloading data file:`, dataUrl);
-        const dataResp = await fetch(`https://corsproxy.io/?${encodeURIComponent(dataUrl)}`);
-        console.log(`📥 [${label}] data status:`, dataResp.status);
-        const dataJson = await dataResp.json();
-        console.log(`📦 [${label}] data json:`, dataJson);
-
-        if (!dataJson || dataJson.type !== 'FeatureCollection' || !Array.isArray(dataJson.features)) {
-          console.warn(`⚠️ [${label}] data is not a FeatureCollection`, dataJson);
-          return null;
-        }
-
-        return dataJson;
-      } catch (e) {
-        console.error(`❌ [${label}] fetch failed`, e);
-        return null;
-      }
-    }
-
-    // Simple in-memory cache stored on window/globalThis so subsequent calls reuse downloads
+    // Cache promises globally so subsequent calls reuse downloads
     const w = (typeof window !== 'undefined') ? window : globalThis;
+    w.__DG_CACHE_PROMISES = w.__DG_CACHE_PROMISES || {};
 
-    if (!w.__HDB_CACHE_PROMISE) {
-      w.__HDB_CACHE_PROMISE = fetchDataGovGeoJson(HDB_DATASET_ID, 'HDB');
-    }
-    if (!w.__AED_CACHE_PROMISE) {
-      w.__AED_CACHE_PROMISE = fetchDataGovGeoJson(AED_DATASET_ID, 'AED');
-    }
-    if (!w.__BUS_CACHE_PROMISE) {
-      w.__BUS_CACHE_PROMISE = fetchDataGovGeoJson(BUS_DATASET_ID, 'Bus Stop');
-    }
-    if (!w.__LAMPPOST_CACHE_PROMISE) {
-      w.__LAMPPOST_CACHE_PROMISE = fetchDataGovGeoJson(LAMPPOST_DATASET_ID, 'Lamp Post');
-    }
-    if (!w.__TRAFFIC_SIGN_CACHE_PROMISE) {
-      w.__TRAFFIC_SIGN_CACHE_PROMISE = fetchDataGovGeoJson(TRAFFIC_DATASET_ID, 'Traffic Sign');
+    function getCached(datasetId, label) {
+      if (!w.__DG_CACHE_PROMISES[datasetId]) {
+        w.__DG_CACHE_PROMISES[datasetId] = fetchDataGovGeoJson(datasetId, label);
+      }
+      return w.__DG_CACHE_PROMISES[datasetId];
     }
 
     const [hdbData, aedData, busData, lampPostData, trafficData] = await Promise.all([
-      w.__HDB_CACHE_PROMISE,
-      w.__AED_CACHE_PROMISE,
-      w.__BUS_CACHE_PROMISE,
-      w.__LAMPPOST_CACHE_PROMISE,
-      w.__TRAFFIC_SIGN_CACHE_PROMISE
+      getCached(DATASET_IDS.HDB, 'HDB'),
+      getCached(DATASET_IDS.AED, 'AED'),
+      getCached(DATASET_IDS.BUS_STOP, 'Bus Stop'),
+      getCached(DATASET_IDS.LAMP_POST, 'Lamp Post'),
+      getCached(DATASET_IDS.TRAFFIC_SIGN, 'Traffic Sign'),
     ]);
 
-    // ---- HDB Blocks: count if point is inside OR footprint intersects/touches circle ----
-    if (hdbData && Array.isArray(hdbData.features)) {
+    // ---- HDB Blocks ----
+    if (hdbData?.features) {
       for (const f of hdbData.features) {
         const geom = f.geometry;
         if (!geom) continue;
-
         try {
           if (geom.type === 'Point') {
-            const coords = geom.coordinates || [];
-            const lng = parseFloat(coords[0]);
-            const lat = parseFloat(coords[1]);
-            if (!Number.isNaN(lng) && !Number.isNaN(lat)) {
-              const pt = turf.point([lng, lat]);
-              if (turf.booleanPointInPolygon(pt, circlePolygon)) {
-                hdbCount++;
-              }
+            const [lng, lat] = geom.coordinates || [];
+            if (Number.isFinite(lng) && Number.isFinite(lat)) {
+              if (turf.booleanPointInPolygon(turf.point([lng, lat]), circlePolygon)) hdbCount++;
             }
           } else if (geom.type === 'Polygon' || geom.type === 'MultiPolygon') {
             const buildingGeom = geom.type === 'Polygon'
               ? turf.polygon(geom.coordinates)
               : turf.multiPolygon(geom.coordinates);
-
-            // ✅ counts if the building footprint and circle share any point (even just touching)
-            if (turf.booleanIntersects(buildingGeom, circlePolygon)) {
-              hdbCount++;
-            }
+            if (turf.booleanIntersects(buildingGeom, circlePolygon)) hdbCount++;
           }
         } catch (e) {
-          console.warn('⚠️ Error handling HDB feature geometry', e, f);
+          console.warn('⚠️ Error handling HDB geometry', e, f);
         }
       }
-    } else {
-      console.warn('⚠️ HDB dataset missing or invalid', hdbData);
     }
 
-    console.log('🏢 HDB Blocks inside/touching circle:', hdbCount);
-
     // ---- AEDs ----
-    if (aedData && Array.isArray(aedData.features)) {
+    if (aedData?.features) {
       for (const f of aedData.features) {
         const geom = f.geometry;
         if (!geom) continue;
-
         try {
           if (geom.type === 'Point') {
-            const coords = geom.coordinates || [];
-            const lng = parseFloat(coords[0]);
-            const lat = parseFloat(coords[1]);
-            if (!Number.isNaN(lng) && !Number.isNaN(lat)) {
-              const pt = turf.point([lng, lat]);
-              if (turf.booleanPointInPolygon(pt, circlePolygon)) {
-                aedCount++;
-              }
+            const [lng, lat] = geom.coordinates || [];
+            if (Number.isFinite(lng) && Number.isFinite(lat)) {
+              if (turf.booleanPointInPolygon(turf.point([lng, lat]), circlePolygon)) aedCount++;
             }
           } else if (geom.type === 'Polygon' || geom.type === 'MultiPolygon') {
             const aedGeom = geom.type === 'Polygon'
               ? turf.polygon(geom.coordinates)
               : turf.multiPolygon(geom.coordinates);
-
-            if (turf.booleanIntersects(aedGeom, circlePolygon)) {
-              aedCount++;
-            }
+            if (turf.booleanIntersects(aedGeom, circlePolygon)) aedCount++;
           }
         } catch (e) {
-          console.warn('⚠️ Error handling AED feature geometry', e, f);
+          console.warn('⚠️ Error handling AED geometry', e, f);
         }
       }
-    } else {
-      console.warn('⚠️ AED dataset missing or invalid', aedData);
     }
 
-    console.log('➕ AEDs inside/touching circle:', aedCount);
-
     // ---- Bus Stops ----
-    if (busData && Array.isArray(busData.features)) {
+    if (busData?.features) {
       for (const f of busData.features) {
         const geom = f.geometry;
         if (!geom) continue;
-
         try {
           if (geom.type === 'Point') {
-            const coords = geom.coordinates || [];
-            const lng = parseFloat(coords[0]);
-            const lat = parseFloat(coords[1]);
-            if (!Number.isNaN(lng) && !Number.isNaN(lat)) {
-              const pt = turf.point([lng, lat]);
-              if (turf.booleanPointInPolygon(pt, circlePolygon)) {
-                busStopCount++;
-              }
+            const [lng, lat] = geom.coordinates || [];
+            if (Number.isFinite(lng) && Number.isFinite(lat)) {
+              if (turf.booleanPointInPolygon(turf.point([lng, lat]), circlePolygon)) busStopCount++;
             }
           } else if (geom.type === 'Polygon' || geom.type === 'MultiPolygon') {
             const busGeom = geom.type === 'Polygon'
               ? turf.polygon(geom.coordinates)
               : turf.multiPolygon(geom.coordinates);
-
-            if (turf.booleanIntersects(busGeom, circlePolygon)) {
-              busStopCount++;
-            }
+            if (turf.booleanIntersects(busGeom, circlePolygon)) busStopCount++;
           }
         } catch (e) {
-          console.warn('⚠️ Error handling Bus Stop feature geometry', e, f);
+          console.warn('⚠️ Error handling Bus Stop geometry', e, f);
         }
       }
-    } else {
-      console.warn('⚠️ Bus Stop dataset missing or invalid', busData);
     }
 
-    console.log('🚌 Bus Stops inside/touching circle:', busStopCount);
-
     // ---- Lamp Posts ----
-    if (lampPostData && Array.isArray(lampPostData.features)) {
+    if (lampPostData?.features) {
       for (const f of lampPostData.features) {
         const geom = f.geometry;
         if (!geom) continue;
-
         try {
           if (geom.type === 'Point') {
-            const coords = geom.coordinates || [];
-            const lng = parseFloat(coords[0]);
-            const lat = parseFloat(coords[1]);
-            if (!Number.isNaN(lng) && !Number.isNaN(lat)) {
-              const pt = turf.point([lng, lat]);
-              if (turf.booleanPointInPolygon(pt, circlePolygon)) {
-                lampPostCount++;
-              }
+            const [lng, lat] = geom.coordinates || [];
+            if (Number.isFinite(lng) && Number.isFinite(lat)) {
+              if (turf.booleanPointInPolygon(turf.point([lng, lat]), circlePolygon)) lampPostCount++;
             }
           } else if (geom.type === 'Polygon' || geom.type === 'MultiPolygon') {
             const lampGeom = geom.type === 'Polygon'
               ? turf.polygon(geom.coordinates)
               : turf.multiPolygon(geom.coordinates);
-
-            if (turf.booleanIntersects(lampGeom, circlePolygon)) {
-              lampPostCount++;
-            }
+            if (turf.booleanIntersects(lampGeom, circlePolygon)) lampPostCount++;
           }
         } catch (e) {
-          console.warn('⚠️ Error handling Lamp Post feature geometry', e, f);
+          console.warn('⚠️ Error handling Lamp Post geometry', e, f);
         }
       }
-    } else {
-      console.warn('⚠️ Lamp Post dataset missing or invalid', lampPostData);
     }
 
-    console.log('💡 Lamp Posts inside/touching circle:', lampPostCount);
-
-    // ---- Traffic Signs (no-entry, slow, stop) ----
-
-    // ---- Traffic Signs (no-entry, slow, stop) ----
-    if (trafficData && Array.isArray(trafficData.features)) {
+    // ---- Traffic Signs ----
+    if (trafficData?.features) {
       for (const f of trafficData.features) {
         const geom = f.geometry;
-        if (!geom) continue;
+        if (!geom || geom.type !== 'Point') continue;
 
         try {
-          if (geom.type !== 'Point') {
-            // dataset is point-based; ignore weird geometries
-            continue;
-          }
-
-          const coords = geom.coordinates || [];
-          const lng = parseFloat(coords[0]);
-          const lat = parseFloat(coords[1]);
-          if (Number.isNaN(lng) || Number.isNaN(lat)) continue;
+          const [lng, lat] = geom.coordinates || [];
+          if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
 
           const pt = turf.point([lng, lat]);
-          if (!turf.booleanPointInPolygon(pt, circlePolygon)) {
-            // sign is outside the circle
-            continue;
-          }
+          if (!turf.booleanPointInPolygon(pt, circlePolygon)) continue;
 
           const category = extractTrafficSignCategory(f);
           if (!category) continue;
 
-          if (category === 'NO_ENTRY') {
-            noEntryCount++;
-          } else if (category === 'SLOW') {
-            slowSignCount++;
-          } else if (category === 'STOP') {
-            stopSignCount++;
-          }
+          if (category === 'NO_ENTRY') noEntryCount++;
+          else if (category === 'SLOW') slowSignCount++;
+          else if (category === 'STOP') stopSignCount++;
         } catch (e) {
           console.warn('⚠️ Error handling Traffic Sign feature', e, f);
         }
       }
-    } else {
-      console.warn('⚠️ Traffic Sign dataset missing or invalid', trafficData);
     }
-
-    console.log('🚫 No-entry signs:', noEntryCount);
-    console.log('🐌 Slow signs:', slowSignCount);
-    console.log('🛑 Stop signs:', stopSignCount);
 
     // ---- Store results on the feature ----
     feature.properties = feature.properties || {};
@@ -5745,19 +5626,15 @@ async function loadCircleStatistics(fid, center, radiusMeters) {
     feature.properties._circleRadius = radiusMeters;
     feature.properties._ts = Date.now();
 
-    // Persist to Supabase / local storage via existing helper
-    if (typeof saveState === 'function') {
-      saveState();
-    }
+    if (typeof saveState === 'function') saveState();
 
-    // ---- Update the style editor UI, if it's open ----
+    // ---- Update UI ----
     if (editorBtn) {
       editorBtn.disabled = false;
       editorBtn.textContent = '🔄 Recalculate Statistics';
 
       let statsDiv = document.getElementById('se-stats-display');
       if (!statsDiv) {
-        // If the style editor hasn't created it yet, attach it above the button
         statsDiv = document.createElement('div');
         statsDiv.id = 'se-stats-display';
         statsDiv.style.cssText =
@@ -5792,7 +5669,6 @@ async function loadCircleStatistics(fid, center, radiusMeters) {
     }
   }
 }
-
 
 
 
@@ -6051,9 +5927,6 @@ async function glimpseTrafficSigns(fid, center, radiusMeters) {
 
   renderGlimpseSigns(inside);
 } // <-- closes async function glimpseTrafficSigns
-
-
-
 
 
 /* ===== Dark Veil — pure WebGL (brighter & obvious purple) ===== */
