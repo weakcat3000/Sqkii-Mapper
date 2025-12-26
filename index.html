@@ -4733,6 +4733,46 @@ function renderReconConstraints() {
   });
 }
 
+// Put this in main script scope (NOT inside workerCode string)
+function prepDataset(fc) {
+  if (!fc || !Array.isArray(fc.features)) return fc;
+
+  for (const f of fc.features) {
+    const g = f?.geometry;
+    if (!g) continue;
+
+    // Points (Lamp posts, AED, Bus stops, etc.)
+    if (g.type === 'Point') {
+      const coords = g.coordinates;
+      if (!Array.isArray(coords) || coords.length < 2) continue;
+
+      const lng = Number(coords[0]);
+      const lat = Number(coords[1]);
+      if (Number.isFinite(lng) && Number.isFinite(lat)) {
+        f.__lng = lng;
+        f.__lat = lat;
+      }
+      continue;
+    }
+
+    // Polygons / MultiPolygons (HDB footprints)
+    if (g.type === 'Polygon') {
+      if (!f.__turfGeom) f.__turfGeom = turf.polygon(g.coordinates);
+      if (!f.__bbox) f.__bbox = turf.bbox(f.__turfGeom);
+      continue;
+    }
+
+    if (g.type === 'MultiPolygon') {
+      if (!f.__turfGeom) f.__turfGeom = turf.multiPolygon(g.coordinates);
+      if (!f.__bbox) f.__bbox = turf.bbox(f.__turfGeom);
+      continue;
+    }
+  }
+
+  return fc;
+}
+
+
 /**
  * Requires:
  * - ensureHdbIndex(hdbData)   // builds hdbData.__rbush using feature __bbox + __turfGeom
