@@ -20,6 +20,9 @@
   <!-- Turf.js -->
   <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
 
+  <!-- RBush (spatial index) -->
+  <script src="https://unpkg.com/rbush@3.0.1/rbush.min.js"></script>
+
   <!-- Supabase JS (UMD) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.5/dist/umd/supabase.min.js"></script>
 
@@ -4580,7 +4583,7 @@ let leafletReconLayer = null;
 
 function openReconModal(fid, center, radius) {
   // Password protection
-  const correctPassword = 'reconwk6482'; // Change this to your desired password
+  const correctPassword = '6482'; // Change this to your desired password
   const enteredPassword = prompt('🔐 Enter password to use Recon Coin:');
   
   if (enteredPassword !== correctPassword) {
@@ -4590,7 +4593,7 @@ function openReconModal(fid, center, radius) {
   
   currentReconCircle = { fid, center, radius };
   reconConstraints = [];
-  reconPrecision = 10; // Reset to default
+  reconPrecision = 20; //Reset to Default
   
   const modal = document.getElementById('recon-modal');
   modal.classList.add('visible');
@@ -4712,15 +4715,15 @@ function updateReconConstraint(index, field, value) {
 function renderReconConstraints() {
   const container = document.getElementById('recon-constraints');
   container.innerHTML = '';
-  
+
   const temp = [...reconConstraints];
   reconConstraints = [];
-  
+
   temp.forEach((c) => {
     addReconConstraint();
     const idx = reconConstraints.length - 1;
     reconConstraints[idx] = c;
-    
+
     // Update the form values
     const row = container.children[idx];
     row.querySelector('select').value = c.type;
@@ -4730,8 +4733,14 @@ function renderReconConstraints() {
   });
 }
 
+/**
+ * Requires:
+ * - ensureHdbIndex(hdbData)   // builds hdbData.__rbush using feature __bbox + __turfGeom
+ * - countHdbInCircleIndexed(hdbData, circle) // uses rbush candidates then booleanIntersects
+ */
+
 async function revealReconLocations() {
-  if (!currentReconCircle || reconConstraints.length === 0) {
+  if (!currentReconCircle || !reconConstraints?.length) {
     alert('No constraints defined.');
     return;
   }
@@ -4739,25 +4748,32 @@ async function revealReconLocations() {
   const status = document.getElementById('recon-status');
   const revealBtn = document.getElementById('recon-reveal');
 
-  // Turn on loading state
-  status.classList.add('loading');
-  status.textContent = 'Loading data and analyzing...';
+  const setLoading = (on, text) => {
+    status.classList.toggle('loading', on);
+    status.textContent = text || status.textContent;
+    revealBtn.disabled = on;
+    revealBtn.classList.toggle('loading', on);
+    revealBtn.innerHTML = on
+      ? '<span class="recon-spinner">⏳</span> Analyzing...'
+      : '🔍 Reveal Locations';
+  };
 
-  revealBtn.disabled = true;
-  revealBtn.classList.add('loading');
-  revealBtn.innerHTML = '<span class="recon-spinner">⏳</span> Analyzing...';
+  const yieldToBrowser = () => new Promise(r => setTimeout(r, 0));
+
+  setLoading(true, 'Loading data and analyzing...');
 
   try {
-    // Fetch all required datasets
     const w = window;
 
-    w.__LAMPPOST_CACHE_PROMISE = w.__LAMPPOST_CACHE_PROMISE || fetchDataGovGeoJson(DATASET_IDS.LAMP_POST, 'Lamp Post');
-    w.__HDB_CACHE_PROMISE      = w.__HDB_CACHE_PROMISE      || fetchDataGovGeoJson(DATASET_IDS.HDB, 'HDB');
-    w.__AED_CACHE_PROMISE      = w.__AED_CACHE_PROMISE      || fetchDataGovGeoJson(DATASET_IDS.AED, 'AED'); // ✅ FIX
-    w.__BUS_CACHE_PROMISE      = w.__BUS_CACHE_PROMISE      || fetchDataGovGeoJson(DATASET_IDS.BUS_STOP, 'Bus Stop');
-    w.__TRAFFIC_SIGN_CACHE_PROMISE = w.__TRAFFIC_SIGN_CACHE_PROMISE || fetchDataGovGeoJson(DATASET_IDS.TRAFFIC_SIGN, 'Traffic Sign');
+    // Ensure cached fetch promises exist
+    w.__LAMPPOST_CACHE_PROMISE ??= fetchDataGovGeoJson(DATASET_IDS.LAMP_POST, 'Lamp Post');
+    w.__HDB_CACHE_PROMISE      ??= fetchDataGovGeoJson(DATASET_IDS.HDB, 'HDB');
+    w.__AED_CACHE_PROMISE      ??= fetchDataGovGeoJson(DATASET_IDS.AED, 'AED');
+    w.__BUS_CACHE_PROMISE      ??= fetchDataGovGeoJson(DATASET_IDS.BUS_STOP, 'Bus Stop');
+    w.__TRAFFIC_SIGN_CACHE_PROMISE ??= fetchDataGovGeoJson(DATASET_IDS.TRAFFIC_SIGN, 'Traffic Sign');
 
-    const [lampData, hdbData, aedData, busData, trafficData] = await Promise.all([
+    // Load + preprocess once
+    let [lampData, hdbData, aedData, busData, trafficData] = await Promise.all([
       w.__LAMPPOST_CACHE_PROMISE,
       w.__HDB_CACHE_PROMISE,
       w.__AED_CACHE_PROMISE,
@@ -4765,42 +4781,47 @@ async function revealReconLocations() {
       w.__TRAFFIC_SIGN_CACHE_PROMISE
     ]);
 
-    // Create search circle polygon
+    lampData    = prepDataset(lampData);
+    hdbData     = prepDataset(hdbData);
+    ensureHdbIndex(hdbData);           // ✅ build rbush once
+    aedData     = prepDataset(aedData);
+    busData     = prepDataset(busData);
+    trafficData = prepDataset(trafficData);
+
+    // Build recon search circle + adaptive precision
     const searchCircle = turf.circle(
       currentReconCircle.center,
       currentReconCircle.radius,
       { steps: 64, units: 'meters' }
     );
 
-    // 🚀 ADAPTIVE GRID: Adjust spacing based on circle size
-    const bbox = turf.bbox(searchCircle);
-    const circleArea = turf.area(searchCircle); // in square meters
-
+    const circleArea = turf.area(searchCircle); // m²
     let adaptivePrecision = reconPrecision;
 
-    // If circle is large, automatically increase spacing to prevent crashes
-    if (circleArea > 1000000) { // > 1 km²
-      adaptivePrecision = Math.max(reconPrecision, 15);
-      console.log('Large circle detected, using adaptive precision:', adaptivePrecision);
-    }
-    if (circleArea > 5000000) { // > 5 km²
-      adaptivePrecision = Math.max(reconPrecision, 25);
-      console.log('Very large circle detected, using adaptive precision:', adaptivePrecision);
-    }
-    if (circleArea > 10000000) { // > 10 km²
-      adaptivePrecision = Math.max(reconPrecision, 40);
-      console.log('Extremely large circle detected, using adaptive precision:', adaptivePrecision);
+    // thresholds from largest to smallest
+    const thresholds = [
+      [10_000_000, 40],
+      [ 5_000_000, 25],
+      [ 1_000_000, 15],
+    ];
+    for (const [area, minPrec] of thresholds) {
+      if (circleArea > area) adaptivePrecision = Math.max(adaptivePrecision, minPrec);
     }
 
-    const cellSizeKm = adaptivePrecision / 1000;
-    const grid = turf.pointGrid(bbox, cellSizeKm, { units: 'kilometers' });
-
-    // Filter to only points inside the search circle
-    const testPoints = grid.features.filter(pt =>
-      turf.booleanPointInPolygon(pt, searchCircle)
+    const grid = turf.pointGrid(
+      turf.bbox(searchCircle),
+      adaptivePrecision / 1000,
+      { units: 'kilometers' }
     );
 
-    // Safety check: prevent analyzing too many points
+    // Filter test points inside circle
+    const testPoints = [];
+    for (const pt of grid.features) {
+      const coords = pt.geometry?.coordinates;
+      if (coords && turf.booleanPointInPolygon(coords, searchCircle)) testPoints.push(pt);
+    }
+
+    // Safety check
     const MAX_POINTS = 2000;
     if (testPoints.length > MAX_POINTS) {
       const ok = confirm(
@@ -4808,115 +4829,88 @@ async function revealReconLocations() {
         `This may take 120-360 seconds and could slow down your browser.\n\n` +
         `Continue anyway?`
       );
-      if (!ok) {
-        status.classList.remove('loading');
-        status.textContent = '❌ Cancelled';
-
-        revealBtn.disabled = false;
-        revealBtn.classList.remove('loading');
-        revealBtn.textContent = '🔍 Reveal Locations';
-        return;
-      }
+      if (!ok) return setLoading(false, '❌ Cancelled');
     }
 
     status.textContent = `🔍 Testing ${testPoints.length} locations at ${adaptivePrecision}m spacing...`;
 
-    // Test each point against all constraints (with progress updates)
+    // Map constraint -> counting logic
+    const trafficCat = { NO_ENTRY: 'NO_ENTRY', SLOW: 'SLOW', STOP: 'STOP' };
+    const dataByType = { LAMP_POST: lampData, AED: aedData, BUS_STOP: busData };
+
+    // ✅ Run cheaper constraints first, HDB last
+    const costRank = { AED: 1, BUS_STOP: 1, LAMP_POST: 2, NO_ENTRY: 3, SLOW: 3, STOP: 3, HDB: 99 };
+    const constraintsSorted = [...reconConstraints].sort(
+      (a, b) => (costRank[a.type] ?? 50) - (costRank[b.type] ?? 50)
+    );
+
     const matchingPoints = [];
-    let i = 0;
+    const timeSliceMs = 24;
 
-    // How long to work before yielding (ms). 10–14 is a good range.
-    const timeSliceMs = 6;
+    for (let i = 0; i < testPoints.length; ) {
+      const sliceStart = performance.now();
 
-    while (i < testPoints.length) {
-      const start = performance.now();
+      while (i < testPoints.length && (performance.now() - sliceStart) < timeSliceMs) {
+        const testPt = testPoints[i++];
+        const center = testPt.geometry.coordinates;
 
-      // Process points for ~timeSliceMs, then yield to keep UI responsive
-      while (i < testPoints.length && (performance.now() - start) < timeSliceMs) {
-        const testPt = testPoints[i];
-        i++;
+        // ✅ cache circles per point (same radius reused across constraints)
+        const circleCache = new Map(); // radius -> circle feature
 
-        let allMatch = true;
-
-        for (const constraint of reconConstraints) {
-          const testCircle = turf.circle(
-            testPt.geometry.coordinates,
-            constraint.radius,
-            { steps: 32, units: 'meters' }
-          );
-
-          let count = 0;
-
-          // Count based on type
-          switch (constraint.type) {
-            case 'LAMP_POST':
-              if (lampData) count = countInCircle(lampData, testCircle);
-              break;
-            case 'HDB':
-              if (hdbData) count = countInCircle(hdbData, testCircle);
-              break;
-            case 'AED':
-              if (aedData) count = countInCircle(aedData, testCircle);
-              break;
-            case 'BUS_STOP':
-              if (busData) count = countInCircle(busData, testCircle);
-              break;
-            case 'NO_ENTRY':
-              if (trafficData) count = countTrafficSigns(trafficData, testCircle, 'NO_ENTRY');
-              break;
-            case 'SLOW':
-              if (trafficData) count = countTrafficSigns(trafficData, testCircle, 'SLOW');
-              break;
-            case 'STOP':
-              if (trafficData) count = countTrafficSigns(trafficData, testCircle, 'STOP');
-              break;
+        let ok = true;
+        for (const c of constraintsSorted) {
+          let testCircle = circleCache.get(c.radius);
+          if (!testCircle) {
+            // Keep steps=32 to preserve exact behavior vs your current version
+            testCircle = turf.circle(center, c.radius, { steps: 32, units: 'meters' });
+            circleCache.set(c.radius, testCircle);
           }
 
-          if (count < constraint.min || count > constraint.max) {
-            allMatch = false;
-            break;
+          let cnt = 0;
+
+          if (c.type === 'HDB') {
+            // ✅ indexed HDB count (still uses booleanIntersects inside)
+            cnt = countHdbInCircleIndexed(hdbData, testCircle);
+          } else if (dataByType[c.type]) {
+            cnt = countInCircle(dataByType[c.type], testCircle);
+          } else if (trafficCat[c.type] && trafficData) {
+            cnt = countTrafficSigns(trafficData, testCircle, trafficCat[c.type]);
           }
+
+          if (cnt < c.min || cnt > c.max) { ok = false; break; }
         }
 
-        if (allMatch) {
-          matchingPoints.push(testPt);
-        }
+        if (ok) matchingPoints.push(testPt);
       }
 
-      // Update progress after each time slice
       const progress = Math.min(100, Math.round((i / testPoints.length) * 100));
       status.textContent = `🔍 Progress: ${progress}% (${i}/${testPoints.length} tested, ${matchingPoints.length} matches)`;
 
-      // Yield to browser to keep UI responsive
-      await new Promise(resolve => requestAnimationFrame(resolve));
+      await yieldToBrowser();
     }
 
-    status.textContent = `✅ Found ${matchingPoints.length} matching locations (tested ${testPoints.length} points at ${adaptivePrecision}m spacing)`;
+    status.textContent =
+      `✅ Found ${matchingPoints.length} matching locations (tested ${testPoints.length} points at ${adaptivePrecision}m spacing)`;
 
-    if (matchingPoints.length === 0) {
+    if (!matchingPoints.length) {
       alert('No locations found matching all constraints.');
     } else {
-      // Render matching areas on map
       renderReconOverlay(matchingPoints);
     }
-
-  } catch (error) {
-    console.error('Recon analysis failed:', error);
+  } catch (err) {
+    console.error('Recon analysis failed:', err);
     status.textContent = '❌ Analysis failed';
-    alert('Failed to analyze locations: ' + error.message);
+    alert('Failed to analyze locations: ' + (err?.message || err));
   } finally {
-    status.classList.remove('loading');
-    revealBtn.disabled = false;
-    revealBtn.classList.remove('loading');
-    revealBtn.textContent = '🔍 Reveal Locations';
+    setLoading(false);
   }
 }
 
-
 function countInCircle(dataset, circle) {
   if (!dataset || !Array.isArray(dataset.features)) return 0;
-  
+
   let count = 0;
+
   for (const f of dataset.features) {
     const geom = f.geometry;
     if (!geom) continue;
@@ -4924,21 +4918,25 @@ function countInCircle(dataset, circle) {
     try {
       // For Points: check if inside circle
       if (geom.type === 'Point') {
-        const coords = geom.coordinates || [];
-        const lng = parseFloat(coords[0]);
-        const lat = parseFloat(coords[1]);
-        if (!Number.isNaN(lng) && !Number.isNaN(lat)) {
-          const pt = turf.point([lng, lat]);
-          if (turf.booleanPointInPolygon(pt, circle)) {
+        // ✅ use cached numeric coords if prepDataset() ran
+        const lng = Number.isFinite(f.__lng) ? f.__lng : Number(geom.coordinates?.[0]);
+        const lat = Number.isFinite(f.__lat) ? f.__lat : Number(geom.coordinates?.[1]);
+
+        if (Number.isFinite(lng) && Number.isFinite(lat)) {
+          // ✅ pass coordinates directly (no turf.point allocation)
+          if (turf.booleanPointInPolygon([lng, lat], circle)) {
             count++;
           }
         }
-      } 
+      }
       // For Polygons/MultiPolygons (HDB buildings): check if touches/intersects
       else if (geom.type === 'Polygon' || geom.type === 'MultiPolygon') {
-        const buildingGeom = geom.type === 'Polygon'
-          ? turf.polygon(geom.coordinates)
-          : turf.multiPolygon(geom.coordinates);
+        // ✅ use cached turf geometry if prepDataset() ran
+        const buildingGeom = f.__turfGeom || (
+          geom.type === 'Polygon'
+            ? turf.polygon(geom.coordinates)
+            : turf.multiPolygon(geom.coordinates)
+        );
 
         // ✅ counts if the building footprint and circle share any point (even just touching)
         if (turf.booleanIntersects(buildingGeom, circle)) {
@@ -4949,26 +4947,34 @@ function countInCircle(dataset, circle) {
       console.warn('⚠️ Error handling feature geometry in countInCircle', e, f);
     }
   }
+
   return count;
 }
 
 function countTrafficSigns(dataset, circle, category) {
   if (!dataset || !Array.isArray(dataset.features)) return 0;
-  
+
   let count = 0;
+
   for (const f of dataset.features) {
     if (f.geometry?.type !== 'Point') continue;
-    
-    const coords = f.geometry.coordinates;
-    const pt = turf.point(coords);
-    
-    if (turf.booleanPointInPolygon(pt, circle)) {
+
+    const coords = f.geometry.coordinates || [];
+    const lng = Number(coords[0]);
+    const lat = Number(coords[1]);
+
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+
+    // ✅ no turf.point allocation
+    if (turf.booleanPointInPolygon([lng, lat], circle)) {
       const cat = extractTrafficSignCategory(f);
       if (cat === category) count++;
     }
   }
+
   return count;
 }
+
 
 function renderReconOverlay(points) {
   console.log('[Recon] Rendering overlay with', points.length, 'points');
@@ -5374,6 +5380,222 @@ const DATASET_IDS = {
   LAMP_POST: "d_ca109de3e83efdd9a10bc5f3dda70a98",
   TRAFFIC_SIGN: "d_bbf0132c7290d6838f82003972d933d5",
 };
+
+let reconWorker = null;
+
+function getReconWorker() {
+  if (reconWorker) return reconWorker;
+
+  const workerCode = `
+    // Load turf in the worker (same turf version you use in main page)
+    importScripts('https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js');
+
+    let cache = {
+      lamp: null, hdb: null, aed: null, bus: null, traffic: null
+    };
+
+    function prepDataset(fc) {
+      if (!fc || !Array.isArray(fc.features)) return fc;
+
+      for (const f of fc.features) {
+        const g = f?.geometry;
+        if (!g) continue;
+
+        // Fast path for Point datasets (AED, Bus Stops, Lamp Posts, etc.)
+        if (g.type === 'Point') {
+          const coords = g.coordinates;
+          if (!Array.isArray(coords) || coords.length < 2) continue;
+
+          const lng = Number(coords[0]);
+          const lat = Number(coords[1]);
+          if (Number.isFinite(lng) && Number.isFinite(lat)) {
+            f.__lng = lng;
+            f.__lat = lat;
+          }
+          continue;
+        }
+
+        // Polygon / MultiPolygon datasets (HDB footprints)
+        if (g.type === 'Polygon') {
+          // Build once
+          if (!f.__turfGeom) f.__turfGeom = turf.polygon(g.coordinates);
+          // Cache bbox once (required for RBush indexing)
+          if (!f.__bbox) f.__bbox = turf.bbox(f.__turfGeom);
+          continue;
+        }
+
+        if (g.type === 'MultiPolygon') {
+          if (!f.__turfGeom) f.__turfGeom = turf.multiPolygon(g.coordinates);
+          if (!f.__bbox) f.__bbox = turf.bbox(f.__turfGeom);
+          continue;
+        }
+
+        // (Optional) If you ever get LineString datasets, you can add them here.
+      }
+
+      return fc;
+    }
+
+    function countInCircle(dataset, circle) {
+      if (!dataset || !Array.isArray(dataset.features)) return 0;
+      let count = 0;
+      for (const f of dataset.features) {
+        const g = f.geometry;
+        if (!g) continue;
+
+        if (g.type === 'Point') {
+          const lng = Number.isFinite(f.__lng) ? f.__lng : Number(g.coordinates?.[0]);
+          const lat = Number.isFinite(f.__lat) ? f.__lat : Number(g.coordinates?.[1]);
+          if (Number.isFinite(lng) && Number.isFinite(lat)) {
+            if (turf.booleanPointInPolygon([lng, lat], circle)) count++;
+          }
+        } else if (g.type === 'Polygon' || g.type === 'MultiPolygon') {
+          const buildingGeom = f.__turfGeom || (
+            g.type === 'Polygon' ? turf.polygon(g.coordinates) : turf.multiPolygon(g.coordinates)
+          );
+          if (turf.booleanIntersects(buildingGeom, circle)) count++;
+        }
+      }
+      return count;
+    }
+
+    function extractTrafficSignCategory(feature) {
+      // keep your existing logic if you want; this is a simple placeholder
+      const desc = (feature.properties?.description || feature.properties?.type || '').toString().toLowerCase();
+      if (!desc) return null;
+      return desc;
+    }
+
+    function countTrafficSigns(dataset, circle, category) {
+      if (!dataset || !Array.isArray(dataset.features)) return 0;
+      let count = 0;
+
+      for (const f of dataset.features) {
+        if (f.geometry?.type !== 'Point') continue;
+        const lng = Number.isFinite(f.__lng) ? f.__lng : Number(f.geometry.coordinates?.[0]);
+        const lat = Number.isFinite(f.__lat) ? f.__lat : Number(f.geometry.coordinates?.[1]);
+        if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+
+        if (turf.booleanPointInPolygon([lng, lat], circle)) {
+          const cat = f.__cat || (f.__cat = extractTrafficSignCategory(f));
+          if (cat === category) count++;
+        }
+      }
+      return count;
+    }
+
+    async function fetchGeoJson(fetchUrl) {
+      const res = await fetch(fetchUrl);
+      if (!res.ok) throw new Error('Fetch failed: ' + res.status);
+      return await res.json();
+    }
+
+    onmessage = async (e) => {
+      const msg = e.data;
+      if (msg?.type !== 'START') return;
+
+      try {
+        const {
+          fetchUrls, // { lampUrl, hdbUrl, aedUrl, busUrl, trafficUrl }
+          reconCenter, reconRadiusMeters,
+          reconPrecisionMeters,
+          constraints,
+          steps
+        } = msg;
+
+        // Load+cache datasets inside worker (so it keeps running even if tab hidden)
+        if (!cache.lamp)    cache.lamp    = prepDataset(await fetchGeoJson(fetchUrls.lampUrl));
+        if (!cache.hdb)     cache.hdb     = prepDataset(await fetchGeoJson(fetchUrls.hdbUrl));
+        if (!cache.aed)     cache.aed     = prepDataset(await fetchGeoJson(fetchUrls.aedUrl));
+        if (!cache.bus)     cache.bus     = prepDataset(await fetchGeoJson(fetchUrls.busUrl));
+        if (!cache.traffic) cache.traffic = prepDataset(await fetchGeoJson(fetchUrls.trafficUrl));
+
+        const searchCircle = turf.circle(reconCenter, reconRadiusMeters, { steps: steps || 64, units: 'meters' });
+        const bbox = turf.bbox(searchCircle);
+        const cellSizeKm = reconPrecisionMeters / 1000;
+        const grid = turf.pointGrid(bbox, cellSizeKm, { units: 'kilometers' });
+
+        // Filter test points inside recon circle
+        const testPoints = [];
+        for (const pt of grid.features) {
+          const coords = pt.geometry?.coordinates;
+          if (!coords) continue;
+          if (turf.booleanPointInPolygon(coords, searchCircle)) testPoints.push(coords);
+        }
+
+        postMessage({ type: 'META', total: testPoints.length });
+
+        const matches = [];
+        for (let i = 0; i < testPoints.length; i++) {
+          const coords = testPoints[i];
+          const center = coords; // [lng, lat]
+
+          let ok = true;
+          for (const c of constraints) {
+            const circle = turf.circle(center, c.radius, { steps: 32, units: 'meters' });
+
+            let cnt = 0;
+            if (c.dataset === 'lamp') cnt = countInCircle(cache.lamp, circle);
+            else if (c.dataset === 'hdb') cnt = countInCircle(cache.hdb, circle);
+            else if (c.dataset === 'aed') cnt = countInCircle(cache.aed, circle);
+            else if (c.dataset === 'bus') cnt = countInCircle(cache.bus, circle);
+            else if (c.dataset === 'traffic') cnt = countTrafficSigns(cache.traffic, circle, c.category);
+
+            if (cnt < c.min || cnt > c.max) { ok = false; break; }
+          }
+
+          if (ok) matches.push(center);
+
+          // progress update every ~100 points
+          if (i % 100 === 0) postMessage({ type: 'PROGRESS', done: i });
+        }
+
+        postMessage({ type: 'DONE', matches });
+      } catch (err) {
+        postMessage({ type: 'ERROR', message: String(err?.message || err) });
+      }
+    };
+  `;
+
+  const blob = new Blob([workerCode], { type: 'text/javascript' });
+  reconWorker = new Worker(URL.createObjectURL(blob));
+  return reconWorker;
+}
+
+function ensureHdbIndex(hdbData) {
+  if (!hdbData?.features) return;
+  if (hdbData.__rbush) return;                 // already built
+  if (typeof rbush !== 'function') return;     // rbush script missing
+
+  const tree = new rbush();
+  const items = [];
+
+  for (const f of hdbData.features) {
+    if (!f.__turfGeom || !f.__bbox) continue;  // ensured by prepDataset()
+    const b = f.__bbox; // [minX,minY,maxX,maxY]
+    items.push({ minX: b[0], minY: b[1], maxX: b[2], maxY: b[3], f });
+  }
+
+  tree.load(items);
+  hdbData.__rbush = tree;
+}
+
+function countHdbInCircleIndexed(hdbData, circle) {
+  // Fallback if no index
+  if (!hdbData?.__rbush) return countInCircle(hdbData, circle);
+
+  const [minX, minY, maxX, maxY] = turf.bbox(circle);
+  const candidates = hdbData.__rbush.search({ minX, minY, maxX, maxY });
+
+  let count = 0;
+  for (const item of candidates) {
+    // IMPORTANT: still uses booleanIntersects (touching boundary counts)
+    if (turf.booleanIntersects(item.f.__turfGeom, circle)) count++;
+  }
+  return count;
+}
+
+
 
 function workerProxy(url) {
   return WORKER_BASE + encodeURIComponent(url);
