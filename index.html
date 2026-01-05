@@ -614,9 +614,9 @@ a{color:var(--accent)}
     <div class="style-row"><label>Width</label><input id="se-width" type="number" min="0" max="20" step="0.5" value="2"></div>
     <div class="style-actions">
       <button class="btn small danger" id="se-delete">Delete</button>
+      <button class="btn small" id="se-drag">Drag</button>
       <button class="btn small" id="se-close">Close</button>
     </div>
-  </div>
 
 </div>
 
@@ -2132,16 +2132,72 @@ function sanitizeHtml(input){ try{ const parser=new DOMParser(); const doc=parse
 function findYouTubeId(str){ if(!str) return ''; const m=String(str).match(/(?:youtube\.com\/watch\?[^#\s]*v=|youtu\.be\/|youtube\.com\/embed\/)([A-Za-z0-9_-]{11})/); return m?m[1]:''; }
 function buildYouTubeEmbed(id){ if(!id) return ''; const src='https://www.youtube-nocookie.com/embed/'+id+'?rel=0&modestbranding=1&playsinline=1'; return '<div class="yt-portrait" style="text-align:center"><iframe src="'+src+'" title="YouTube" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>'; }
 function buildPopupHTMLFromProps(props){
-  const name=props.name||'Feature'; const raw=props.description||''; const looksHtml=/<\/?[a-z][\s\S]*>/i.test(raw);
-  let safe=looksHtml?sanitizeHtml(raw):escapeHtml(raw).replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener">$1</a>');
-  const tmp=document.createElement('div'); tmp.innerHTML=safe; tmp.querySelectorAll('img').forEach(img=>img.remove()); safe=tmp.innerHTML;
-  const id=findYouTubeId(raw)||findYouTubeId(tmp.textContent||''); const embed=buildYouTubeEmbed(id);
-  return '<div style="min-width:260px;max-width:340px;">'
-       + '<div style="font-weight:800;font-size:16px;margin-bottom:6px;text-align:center;">'+escapeHtml(name)+'</div>'
-       + (embed || '')
-       + (safe ? '<div style="font-size:13px;line-height:1.35;color:#cbd5e1;font-weight:700;">'+safe+'</div>' : '')
-       + '</div>';
+  props = props || {};
+
+  var name = (props.name != null && String(props.name).trim()) ? String(props.name) : 'Feature';
+  var raw  = (props.description != null) ? String(props.description) : '';
+  var looksHtml = /<\/?[a-z][\s\S]*>/i.test(raw);
+
+  var safe = looksHtml
+    ? sanitizeHtml(raw)
+    : escapeHtml(raw).replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener">$1</a>');
+
+  var tmp = document.createElement('div');
+  tmp.innerHTML = safe;
+  var imgs = tmp.querySelectorAll('img');
+  for (var ii = 0; ii < imgs.length; ii++) imgs[ii].remove();
+  safe = tmp.innerHTML;
+
+  var id    = findYouTubeId(raw) || findYouTubeId(tmp.textContent || '');
+  var embed = buildYouTubeEmbed(id);
+
+  // ✅ Circle center (Lat/Lng)
+  var centerHtml = '';
+  var lng = props._circleLng;
+  var lat = props._circleLat;
+
+  // fallback: parse _circleCenter if needed
+  if ((!Number.isFinite(+lng) || !Number.isFinite(+lat)) && props._circleCenter != null) {
+    var c = props._circleCenter;
+
+    if (Array.isArray(c) && c.length === 2) {
+      lng = c[0]; lat = c[1];
+    } else if (typeof c === 'string') {
+      try {
+        var arr = JSON.parse(c);
+        if (Array.isArray(arr) && arr.length === 2) { lng = arr[0]; lat = arr[1]; }
+      } catch (e) {}
+
+      if (!Number.isFinite(+lng) || !Number.isFinite(+lat)) {
+        var parts = c.split(',').map(function(s){ return s.trim(); });
+        if (parts.length === 2) { lng = parts[0]; lat = parts[1]; }
+      }
+    }
+  }
+
+  if (Number.isFinite(+lng) && Number.isFinite(+lat)) {
+    lng = +lng; lat = +lat;
+    centerHtml =
+      '<div style="margin:6px 0 8px; padding:8px; border:1px solid #1f2430; border-radius:10px; background:rgba(0,0,0,0.18);">'
+    +   '<div style="font-size:12px; color:#9aa6bf; font-weight:800; margin-bottom:4px;">Center</div>'
+    +   '<div style="font-size:13px; line-height:1.35; color:#e5e7eb; font-weight:800;">'
+    +     'Lat: ' + lat.toFixed(6) + '<br/>Lng: ' + lng.toFixed(6)
+    +   '</div>'
+    + '</div>';
+  }
+
+  return (
+    '<div style="min-width:260px;max-width:340px;">'
+    + '<div style="font-weight:800;font-size:16px;margin-bottom:6px;text-align:center;">' + escapeHtml(name) + '</div>'
+    + centerHtml
+    + (embed || '')
+    + (safe ? '<div style="font-size:13px;line-height:1.35;color:#cbd5e1;font-weight:700;">' + safe + '</div>' : '')
+    + '</div>'
+  );
 }
+
+
+
 function bboxOfFeature(f){ let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity; (function scan(c){ if(typeof c[0]==='number'){ const [x,y]=c; minX=Math.min(minX,x); minY=Math.min(minY,y); maxX=Math.max(maxX,x); maxY=Math.max(maxY,y);} else c.forEach(scan); })(f.geometry.coordinates); return [[minX,minY],[maxX,maxY]]; }
 function panPopupIntoViewGL(lngLat,liftPx=220){ const p=mapgl.project(lngLat); p.y-=liftPx; const center=mapgl.unproject(p); mapgl.easeTo({center,duration:350}); }
 
@@ -2567,6 +2623,20 @@ function createGroupOnLeaflet(entry, rebuild = false) {
   applyVisibility(entry);
 }
 
+// Cancel circle drag with ESC
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (!circleDragCtx) return;
+
+  // Reset cursor
+  if (engine === 'gl') mapgl.getCanvas().style.cursor = '';
+  else mapleaf.getContainer().style.cursor = '';
+
+  // Stop dragging
+  circleDragCtx = null;
+});
+
+
 function refreshGroupBoth(entry) {
   refreshGroupGL(entry);
   if (entry.lfGroup) {
@@ -2894,11 +2964,17 @@ function addCircleToLayer(centerLngLat, radius, color, layerName){
   const geom = turf.circle([centerLngLat[0], centerLngLat[1]], radius, {steps:128, units:'meters'}).geometry; 
   const name = `Circle ${radius}m (${(color||'red').toUpperCase()}) @ ${timestampLabel()}`;
   const props = { 
-    fid, name, hidden:false, _gid:fid, _ts:Date.now(), 
-    _fill:hex, _fillOpacity:0.18, _stroke:hex, _strokeOpacity:0.9, _weight:2,
-    _circleCenter: centerLngLat,  // Store center for statistics
-    _circleRadius: radius         // Store radius for statistics
-  };
+   fid, name, hidden:false, _gid:fid, _ts:Date.now(), 
+   _fill:hex, _fillOpacity:0.18, _stroke:hex, _strokeOpacity:0.9, _weight:2,
+
+   _circleCenter: centerLngLat,  // Store center for statistics
+   _circleRadius: radius,        // Store radius for statistics
+
+   // ✅ store as numbers too (popup-safe)
+   _circleLng: +centerLngLat[0],
+   _circleLat: +centerLngLat[1],
+ };
+
 
   entry.data.features.push({ type:'Feature', geometry:geom, properties:props });
   entry.items = rebuildItemsFromFeatures(entry.data.features);
@@ -2927,11 +3003,17 @@ byId('draw-apply').addEventListener('click', ()=>{
   const geom = turf.circle(centerLngLat, radius, {steps:128, units:'meters'}).geometry;
   const name = `Circle ${radius}m (RED) @ ${timestampLabel()}`;
   const props = { 
-    fid, name, hidden:false, _gid:fid, _ts:Date.now(), 
-    _fill:hex, _fillOpacity:0.12, _stroke:hex, _strokeOpacity:0.9, _weight:2,
-    _circleCenter: centerLngLat,  // Store center for statistics
-    _circleRadius: radius         // Store radius for statistics
-  };
+   fid, name, hidden:false, _gid:fid, _ts:Date.now(), 
+   _fill:hex, _fillOpacity:0.12, _stroke:hex, _strokeOpacity:0.9, _weight:2,
+
+   _circleCenter: centerLngLat,  // Store center for statistics
+   _circleRadius: radius,        // Store radius for statistics
+
+   // ✅ store as numbers too (popup-safe)
+   _circleLng: +lng,
+   _circleLat: +lat,
+ };
+
   entry.data.features.push({ type:'Feature', geometry:geom, properties:props });
   entry.items = rebuildItemsFromFeatures(entry.data.features);
   refreshGroupBoth(entry);
@@ -3178,9 +3260,12 @@ const seFill   = byId('se-fill'),
       seWidth  = byId('se-width'),
       seClose  = byId('se-close'),
       seDelete = byId('se-delete'),
+      seDrag   = byId('se-drag'),
       seCloseTop = byId('se-close-top');   
 
 let editCtx=null, editingEnabled=false;
+let circleDragCtx = null; // { entry, fid } while dragging
+
 const editToggle = document.getElementById('edit-toggle');
 
 // Add Calculate Statistics/Glimpse button element (will be created dynamically)
@@ -3189,6 +3274,28 @@ let seGlimpseSigns = null;
 let seReconCoin = null;  
 
 
+seDrag.addEventListener('click', () => {
+  if (!editCtx) return;
+
+  const { entry, fid } = editCtx;
+  const feat = entry.data.features.find(f => f?.properties?.fid === fid);
+  if (!feat) return;
+
+  // Only allow dragging circles
+  if (!feat.properties || !Number.isFinite(+feat.properties._circleRadius)) {
+    alert('Drag is only for circles.');
+    return;
+  }
+
+  // Hide the editor popup like you wanted
+  closeStyleEditor();
+
+  // Start drag mode
+  circleDragCtx = { entry, fid };
+
+  if (engine === 'gl') mapgl.getCanvas().style.cursor = 'move';
+  else mapleaf.getContainer().style.cursor = 'move';
+});
 
 seDelete.addEventListener('click', () => {
   if (!editCtx) return;
@@ -4946,6 +5053,29 @@ async function revealReconLocations() {
   }
 }
 
+function moveCircleFeature(entry, fid, lng, lat){
+  const ix = entry.data.features.findIndex(f => f?.properties?.fid === fid);
+  if (ix < 0) return;
+
+  const feat = entry.data.features[ix];
+  const p = feat.properties || {};
+  const radius = +p._circleRadius;
+  if (!Number.isFinite(radius)) return;
+
+  const geom = turf.circle([lng, lat], radius, { units: 'meters' });
+  feat.geometry = geom.geometry;
+
+  // ✅ update stored center (so click popup shows new coords)
+  p._circleLng = +lng;
+  p._circleLat = +lat;
+  p._circleCenter = [lng, lat];
+  feat.properties = p;
+
+  refreshGroupBoth(entry);
+  renderLayers();
+}
+
+
 function countInCircle(dataset, circle) {
   if (!dataset || !Array.isArray(dataset.features)) return 0;
 
@@ -5124,6 +5254,36 @@ document.getElementById('recon-close')?.addEventListener('click', closeReconModa
 document.getElementById('recon-modal')?.addEventListener('click', (e) => {
   if (e.target.id === 'recon-modal') closeReconModal();
 });
+
+if (engine === 'gl') {
+  mapgl.on('mousemove', (e) => {
+    if (!circleDragCtx) return;
+    moveCircleFeature(circleDragCtx.entry, circleDragCtx.fid, e.lngLat.lng, e.lngLat.lat);
+  });
+
+  mapgl.on('mouseup', () => {
+    if (!circleDragCtx) return;
+    mapgl.getCanvas().style.cursor = '';
+    circleDragCtx = null;
+    saveState();
+  });
+}
+
+
+if (engine !== 'gl') {
+  mapleaf.on('mousemove', (e) => {
+    if (!circleDragCtx) return;
+    moveCircleFeature(circleDragCtx.entry, circleDragCtx.fid, e.latlng.lng, e.latlng.lat);
+  });
+
+  mapleaf.on('mouseup', () => {
+    if (!circleDragCtx) return;
+    mapleaf.getContainer().style.cursor = '';
+    circleDragCtx = null;
+    saveState();
+  });
+}
+
 
 
 /* ====================== GOOGLE SHEETS INTEGRATION ====================== */
