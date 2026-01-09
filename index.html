@@ -32,6 +32,9 @@
   <!-- Preload button click sound for instant play -->
   <link rel="preload" href="button.mp3" as="audio" />
 
+  <script defer src="https://unpkg.com/@lottiefiles/lottie-player@latest/dist/lottie-player.js"></script>
+
+
 <style>
 :root{
   --panel:#0f1115;--panel-2:#12151b;--muted:#98a2b3;--text:#e5e7eb;
@@ -72,6 +75,23 @@ html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px/
 .row-split{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:center}
 input[type="url"],select,input[type="text"],input[type="number"]{position:relative;z-index:1;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:8px;padding:8px 10px;background:var(--panel-2);color:var(--text)}
 #mapgl,#mapleaf{height:100%;width:100%}
+
+/* --- Lottie cat under "Sqkii Mapper" --- */
+#brand-stack{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  gap:6px;
+  line-height:1.05;
+}
+
+#cat-lottie{
+  width:90px;
+  height:90px;
+  pointer-events:none;
+}
+
+
 
 /* Layers list */
 .layers-empty{padding:14px;position:relative;z-index:1}
@@ -507,7 +527,19 @@ a{color:var(--accent)}
 
     <div class="header">
       <div class="project-title">
-        Sqkii Mapper
+        <div id="brand-stack">
+          <div id="brand-title">Sqkii Mapper</div>
+
+          <lottie-player
+            id="cat-lottie"
+            src="cat-fishing-on-moon.lottie"
+            background="transparent"
+            speed="1"
+            loop
+            autoplay
+          ></lottie-player>
+        </div>
+
         <!-- Audio toggle -->
         <button id="audio-toggle" class="icon-btn" title="Audio on/off">...</button>
       </div>
@@ -3287,15 +3319,21 @@ seDrag.addEventListener('click', () => {
     return;
   }
 
-  // Hide the editor popup like you wanted
   closeStyleEditor();
 
   // Start drag mode
   circleDragCtx = { entry, fid };
 
-  if (engine === 'gl') mapgl.getCanvas().style.cursor = 'move';
-  else mapleaf.getContainer().style.cursor = 'move';
-});
+  // Disable map pan while dragging
+  if (engine === 'gl') {
+    try { mapgl.dragPan.disable(); } catch {}
+    mapgl.getCanvas().style.cursor = 'grabbing';
+  } else {
+    try { mapleaf.dragging.disable(); } catch {}
+    mapleaf.getContainer().style.cursor = 'grabbing';
+  }
+}); // 
+
 
 seDelete.addEventListener('click', () => {
   if (!editCtx) return;
@@ -3361,14 +3399,26 @@ if (editToggle){
   });
 }
 
-// Keyboard shortcut (E)
-document.addEventListener('keydown', (e)=>{
-  if (e.key.toLowerCase() === 'e' && !e.metaKey && !e.ctrlKey && !e.altKey){
-    if (document.activeElement && /input|textarea|select/i.test(document.activeElement.tagName)) return;
+// Keyboard shortcut (E) + Esc cancels drag
+document.addEventListener('keydown', (e) => {
+  if (document.activeElement && /input|textarea|select/i.test(document.activeElement.tagName)) return;
+
+  const stopDrag = () => {
+    if (!circleDragCtx) return;
+    if (typeof endCircleDrag === 'function') return endCircleDrag(false);
+
+    if (engine === 'gl') { try { mapgl.dragPan.enable(); } catch {} mapgl.getCanvas().style.cursor = ''; }
+    else { try { mapleaf.dragging.enable(); } catch {} mapleaf.getContainer().style.cursor = ''; }
+    circleDragCtx = null;
+  };
+
+  if (e.key === 'Escape') return stopDrag();
+
+  if (e.key.toLowerCase() === 'e' && !e.metaKey && !e.ctrlKey && !e.altKey) {
     editingEnabled = !editingEnabled;
-    if (!editingEnabled) closeStyleEditor();
+    if (!editingEnabled) { stopDrag(); closeStyleEditor(); }
     reflectEditUI();
-    try{ localStorage.setItem('sqkii-editing', editingEnabled ? '1' : '0'); }catch{}
+    try { localStorage.setItem('sqkii-editing', editingEnabled ? '1' : '0'); } catch {}
   }
 });
 
@@ -5074,6 +5124,99 @@ function moveCircleFeature(entry, fid, lng, lat){
   refreshGroupBoth(entry);
   renderLayers();
 }
+
+function endCircleDrag(save = true) {
+  if (!circleDragCtx) return;
+
+  // Re-enable normal map panning
+  if (engine === 'gl') {
+    mapgl.getCanvas().style.cursor = '';
+    try { mapgl.dragPan.enable(); } catch {}
+  } else {
+    mapleaf.getContainer().style.cursor = '';
+    try { mapleaf.dragging.enable(); } catch {}
+  }
+
+  circleDragCtx = null;
+  if (save) saveState();
+}
+
+// OPTIONAL: tap-to-drop (nice on mobile)
+function dropAt(lng, lat) {
+  if (!circleDragCtx) return;
+  moveCircleFeature(circleDragCtx.entry, circleDragCtx.fid, lng, lat);
+  endCircleDrag(true);
+}
+
+// MapLibre GL handlers (always bind; check engine at runtime)
+mapgl.on('mousemove', (e) => {
+  if (engine !== 'gl' || !circleDragCtx) return;
+  moveCircleFeature(circleDragCtx.entry, circleDragCtx.fid, e.lngLat.lng, e.lngLat.lat);
+});
+
+mapgl.on('touchmove', (e) => {
+  if (engine !== 'gl' || !circleDragCtx) return;
+  if (e.originalEvent?.touches?.length > 1) return; // allow pinch-zoom etc.
+  e.originalEvent?.preventDefault?.();
+  moveCircleFeature(circleDragCtx.entry, circleDragCtx.fid, e.lngLat.lng, e.lngLat.lat);
+});
+
+mapgl.on('mouseup', () => {
+  if (engine !== 'gl' || !circleDragCtx) return;
+  endCircleDrag(true);
+});
+
+mapgl.on('touchend', () => {
+  if (engine !== 'gl' || !circleDragCtx) return;
+  endCircleDrag(true);
+});
+
+mapgl.on('touchcancel', () => {
+  if (engine !== 'gl' || !circleDragCtx) return;
+  endCircleDrag(false);
+});
+
+// Tap to place (super helpful on phones)
+mapgl.on('click', (e) => {
+  if (engine !== 'gl' || !circleDragCtx) return;
+  dropAt(e.lngLat.lng, e.lngLat.lat);
+  e.originalEvent?.preventDefault?.();
+  e.originalEvent?.stopPropagation?.();
+});
+
+
+// Leaflet handlers
+mapleaf.on('mousemove', (e) => {
+  if (engine !== 'leaf' || !circleDragCtx) return;
+  moveCircleFeature(circleDragCtx.entry, circleDragCtx.fid, e.latlng.lng, e.latlng.lat);
+});
+
+mapleaf.on('touchmove', (e) => {
+  if (engine !== 'leaf' || !circleDragCtx) return;
+  if (e.originalEvent?.touches?.length > 1) return;
+  if (e.originalEvent?.cancelable) e.originalEvent.preventDefault();
+  moveCircleFeature(circleDragCtx.entry, circleDragCtx.fid, e.latlng.lng, e.latlng.lat);
+});
+
+mapleaf.on('mouseup', () => {
+  if (engine !== 'leaf' || !circleDragCtx) return;
+  endCircleDrag(true);
+});
+
+mapleaf.on('touchend', () => {
+  if (engine !== 'leaf' || !circleDragCtx) return;
+  endCircleDrag(true);
+});
+
+mapleaf.on('touchcancel', () => {
+  if (engine !== 'leaf' || !circleDragCtx) return;
+  endCircleDrag(false);
+});
+
+mapleaf.on('click', (e) => {
+  if (engine !== 'leaf' || !circleDragCtx) return;
+  dropAt(e.latlng.lng, e.latlng.lat);
+});
 
 
 function countInCircle(dataset, circle) {
