@@ -32,10 +32,6 @@
   <!-- Preload button click sound for instant play -->
   <link rel="preload" href="button.mp3" as="audio" />
 
-  <script type="module" src="https://unpkg.com/@dotlottie/player-component@latest/dist/dotlottie-player.mjs"></script>
-
-
-
 <style>
 :root{
   --panel:#0f1115;--panel-2:#12151b;--muted:#98a2b3;--text:#e5e7eb;
@@ -76,23 +72,6 @@ html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px/
 .row-split{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:center}
 input[type="url"],select,input[type="text"],input[type="number"]{position:relative;z-index:1;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:8px;padding:8px 10px;background:var(--panel-2);color:var(--text)}
 #mapgl,#mapleaf{height:100%;width:100%}
-
-/* --- Lottie cat under "Sqkii Mapper" --- */
-#brand-stack{
-  display:flex;
-  flex-direction:column;
-  align-items:flex-start;
-  gap:6px;
-  line-height:1.05;
-}
-
-#cat-lottie{
-  width:90px;
-  height:90px;
-  pointer-events:none;
-}
-
-
 
 /* Layers list */
 .layers-empty{padding:14px;position:relative;z-index:1}
@@ -528,19 +507,7 @@ a{color:var(--accent)}
 
     <div class="header">
       <div class="project-title">
-        <div id="brand-stack">
-          <div id="brand-title">Sqkii Mapper</div>
-
-          <dotlottie-player
-            id="cat-lottie"
-            src="cat-fishing-on-moon.lottie"
-            background="transparent"
-            speed="1"
-            loop
-            autoplay
-          ></dotlottie-player>
-        </div>
-
+        Sqkii Mapper
         <!-- Audio toggle -->
         <button id="audio-toggle" class="icon-btn" title="Audio on/off">...</button>
       </div>
@@ -1970,23 +1937,6 @@ maptilersdk.config.apiKey = 'f9B8Wv0ythtbvpcK0QEw';
 const CUSTOM_STYLE = 'https://api.maptiler.com/maps/01994e5b-af91-7fae-b8bd-a68c497abf96/style.json?key=' + maptilersdk.config.apiKey;
 
 const mapgl = new maptilersdk.Map({ container:'mapgl', style:CUSTOM_STYLE, center:[103.8198,1.3521], zoom:12 });
-
-(() => {
-  const cat = document.getElementById('cat-lottie');
-  if (!cat) return;
-
-  const applyLowDPR = () => {
-    if (cat.dotLottie?.setRenderConfig) {
-      cat.dotLottie.setRenderConfig({
-        autoResize: true,
-        devicePixelRatio: 0.5,
-      });
-    }
-  };
-
-  cat.addEventListener('ready', applyLowDPR, { once: true });
-  applyLowDPR();
-})();
 
 const _glReadyQueue = [];
 let _glDrainScheduled = false;
@@ -6514,7 +6464,7 @@ async function glimpseTrafficSigns(fid, center, radiusMeters) {
 
 /* ===== Dark Veil — pure WebGL (brighter & obvious purple) ===== */
 /* ===== EDITABLE KNOBS (Ultra-Blended) ===== */
-const SPEED=0.25,ANGLE_SPEED=0.12,BRIGHTNESS=1.10,RES_SCALE=0.5;
+const SPEED=0.25,ANGLE_SPEED=0.12,BRIGHTNESS=1.10,RES_SCALE=1.0;
 const BASE_PURPLE=[0.50,0.32,0.96],ACC_LIGHT=[0.98,0.78,1.00],ACC_DARK=[0.36,0.08,0.60];
 const STR1=0.55,WIDTH1=0.82,FREQ1=4.0,OFF1=0.05;  // light accent
 const STR2=0.45,WIDTH2=0.80,FREQ2=5.2,OFF2=0.24;  // dark accent
