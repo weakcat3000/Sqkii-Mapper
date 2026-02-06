@@ -81,23 +81,12 @@
       -moz-osx-font-smoothing: grayscale;
     }
 
-    /* OPTIMIZED: Hardware acceleration for all interactive/animated elements */
-    .sidebar,
+    /* OPTIMIZED: Minimal GPU acceleration - ONLY for animated elements */
+    /* Removed aggressive GPU hints to fix desktop slowdown */
     .modal,
-    .btn,
-    button,
-    .sheets-btn,
-    #pixelgrid-fab,
-    .sonar-btn,
-    #connection-indicator,
     #cat-lottie,
-    #darkveil,
-    .header,
-    #mapgl,
-    #leaflet {
+    #darkveil {
       transform: translateZ(0);
-      backface-visibility: hidden;
-      perspective: 1000px;
     }
 
     /* OPTIMIZED: Touch optimization for mobile */
@@ -123,7 +112,6 @@
     .modal,
     .grp-list {
       -webkit-overflow-scrolling: touch;
-      will-change: scroll-position;
     }
 
     /* OPTIMIZED: Disable text selection on UI elements (better mobile UX) */
@@ -2472,11 +2460,24 @@
           return out;
         };
 
+        // OPTIMIZED: Efficient filter expression for large geohash arrays
         const anyFieldMatchExpr = (idsArray) => {
-          // Build an expression: ["any", ["match", ["get","geohash"], ["id1","id2"], true, false], ["match", ["get","name"], ...], ...]
+          // For small arrays (<100), use the original match expression
+          if (idsArray.length < 100) {
+            const expr = ['any'];
+            for (const field of CANDIDATE_FIELDS) {
+              expr.push(['match', ['coalesce', ['to-string', ['get', field]], ''], idsArray, true, false]);
+            }
+            return expr;
+          }
+
+          // For large arrays (>=100), use optimized 'in' expression
+          // This is MUCH faster for 1000+ geohashes
+          console.log(`[Geohash] Optimizing filter for ${idsArray.length} geohashes`);
+
           const expr = ['any'];
           for (const field of CANDIDATE_FIELDS) {
-            expr.push(['match', ['coalesce', ['to-string', ['get', field]], ''], idsArray, true, false]);
+            expr.push(['in', ['coalesce', ['to-string', ['get', field]], ''], ['literal', idsArray]]);
           }
           return expr;
         };
