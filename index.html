@@ -3,7 +3,13 @@
 
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <!-- OPTIMIZED: Mobile-first viewport with iPhone optimizations -->
+  <meta name="viewport"
+    content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0b0d11">
   <title>Sqkii Mapper</title>
 
   <!-- OPTIMIZED: Resource hints for faster CDN connections -->
@@ -59,6 +65,74 @@
       --red: #ef4444;
       --green: #22c55e;
       --blue: #3b82f6;
+
+      /* OPTIMIZED: iPhone safe area support */
+      --safe-top: env(safe-area-inset-top);
+      --safe-bottom: env(safe-area-inset-bottom);
+      --safe-left: env(safe-area-inset-left);
+      --safe-right: env(safe-area-inset-right);
+    }
+
+    /* ===================== GPU ACCELERATION & MOBILE OPTIMIZATIONS ===================== */
+
+    /* OPTIMIZED: Global GPU acceleration for smooth performance */
+    * {
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* OPTIMIZED: Hardware acceleration for all interactive/animated elements */
+    .sidebar,
+    .modal,
+    .btn,
+    button,
+    .sheets-btn,
+    #pixelgrid-fab,
+    .sonar-btn,
+    #connection-indicator,
+    #cat-lottie,
+    #darkveil,
+    .header,
+    #mapgl,
+    #leaflet {
+      transform: translateZ(0);
+      backface-visibility: hidden;
+      perspective: 1000px;
+    }
+
+    /* OPTIMIZED: Touch optimization for mobile */
+    button,
+    .btn,
+    a,
+    input,
+    select,
+    textarea {
+      -webkit-tap-highlight-color: rgba(96, 165, 250, 0.2);
+      touch-action: manipulation;
+    }
+
+    /* OPTIMIZED: Prevent iOS bounce/overscroll */
+    html,
+    body {
+      overscroll-behavior: none;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    /* OPTIMIZED: Smooth scrolling with GPU */
+    .sidebar,
+    .modal,
+    .grp-list {
+      -webkit-overflow-scrolling: touch;
+      will-change: scroll-position;
+    }
+
+    /* OPTIMIZED: Disable text selection on UI elements (better mobile UX) */
+    button,
+    .btn,
+    .header,
+    .toolbar {
+      -webkit-user-select: none;
+      user-select: none;
     }
 
     .q-body--prevent-scroll {
@@ -1773,6 +1847,13 @@
           }
         };
 
+        // OPTIMIZED: Passive event listener wrapper for better mobile performance
+        const addPassiveListener = (element, event, handler, options = {}) => {
+          const passiveOptions = { passive: true, ...options };
+          element.addEventListener(event, handler, passiveOptions);
+          return () => element.removeEventListener(event, handler, passiveOptions);
+        };
+
         return {
           debounce,
           throttle,
@@ -1785,7 +1866,8 @@
           deepClone,
           hash,
           cache,
-          raf
+          raf,
+          addPassiveListener
         };
       })();
 
