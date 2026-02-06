@@ -6,35 +6,44 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Sqkii Mapper</title>
 
-  <!-- MapTiler SDK (MapLibre) -->
-  <script src="https://cdn.maptiler.com/maptiler-sdk-js/v3.6.1/maptiler-sdk.umd.min.js"></script>
+  <!-- OPTIMIZED: Resource hints for faster CDN connections -->
+  <link rel="preconnect" href="https://cdn.maptiler.com" crossorigin>
+  <link rel="preconnect" href="https://unpkg.com" crossorigin>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="dns-prefetch" href="https://cdn.maptiler.com">
+  <link rel="dns-prefetch" href="https://unpkg.com">
+  <link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
+
+  <!-- MapTiler SDK (MapLibre) - OPTIMIZED: defer for non-blocking load -->
+  <script src="https://cdn.maptiler.com/maptiler-sdk-js/v3.6.1/maptiler-sdk.umd.min.js" defer></script>
   <link href="https://cdn.maptiler.com/maptiler-sdk-js/v3.6.1/maptiler-sdk.css" rel="stylesheet" />
 
-  <!-- Leaflet (OSM raster) -->
+  <!-- Leaflet (OSM raster) - OPTIMIZED: defer -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin defer></script>
 
-  <!-- togeojson + jszip -->
-  <script src="https://unpkg.com/@tmcw/togeojson@4.7.0/dist/togeojson.umd.js"></script>
-  <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
+  <!-- togeojson + jszip - OPTIMIZED: defer -->
+  <script src="https://unpkg.com/@tmcw/togeojson@4.7.0/dist/togeojson.umd.js" defer></script>
+  <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js" defer></script>
 
-  <!-- Turf.js -->
-  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
+  <!-- Turf.js - OPTIMIZED: defer -->
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js" defer></script>
 
-  <!-- RBush (spatial index) -->
-  <script src="https://unpkg.com/rbush@3.0.1/rbush.min.js"></script>
+  <!-- RBush (spatial index) - OPTIMIZED: defer -->
+  <script src="https://unpkg.com/rbush@3.0.1/rbush.min.js" defer></script>
 
-  <!-- Supabase JS (UMD) -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.5/dist/umd/supabase.min.js"></script>
+  <!-- Supabase JS (UMD) - OPTIMIZED: defer -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.5/dist/umd/supabase.min.js" defer></script>
 
-  <!-- OGL (UMD) for Dark Veil -->
-  <script src="https://cdn.jsdelivr.net/npm/ogl@1.0.6/dist/ogl.umd.js"></script>
+  <!-- OGL (UMD) for Dark Veil - OPTIMIZED: defer -->
+  <script src="https://cdn.jsdelivr.net/npm/ogl@1.0.6/dist/ogl.umd.js" defer></script>
 
   <!-- Preload button click sound for instant play -->
   <link rel="preload" href="button.mp3" as="audio" />
 
-  <script type="module" src="https://unpkg.com/@dotlottie/player-component@latest/dist/dotlottie-player.mjs"></script>
-
+  <!-- Lottie Player - OPTIMIZED: async module -->
+  <script type="module" src="https://unpkg.com/@dotlottie/player-component@latest/dist/dotlottie-player.mjs"
+    async></script>
 
 
   <style>
@@ -263,6 +272,11 @@
       width: 90px;
       height: 90px;
       pointer-events: none;
+      /* OPTIMIZED: GPU acceleration and containment for better performance */
+      transform: translateZ(0);
+      will-change: auto;
+      contain: layout style paint;
+      backface-visibility: hidden;
     }
 
 
@@ -1290,8 +1304,10 @@
           <div id="brand-stack">
             <div id="brand-title">Sqkii Mapper</div>
 
-            <dotlottie-player id="cat-lottie" src="cat-fishing-on-moon.lottie" background="transparent" speed="1" loop
-              autoplay></dotlottie-player>
+            <!-- OPTIMIZED: Reduced speed, canvas renderer for better performance -->
+            <dotlottie-player id="cat-lottie" src="cat-fishing-on-moon.lottie" background="transparent" speed="0.5"
+              renderer="canvas" loop autoplay style="will-change: auto;">
+            </dotlottie-player>
           </div>
 
           <!-- Audio toggle -->
@@ -1709,6 +1725,55 @@
           return h;
         };
 
+        // OPTIMIZED: LocalStorage cache manager with TTL
+        const cache = {
+          save(key, data, ttlMs = null) {
+            try {
+              const item = { data, timestamp: Date.now(), ttl: ttlMs };
+              localStorage.setItem(`sqkii_${key}`, JSON.stringify(item));
+              return true;
+            } catch (e) {
+              console.warn('[Cache] Save failed:', e);
+              return false;
+            }
+          },
+          load(key) {
+            try {
+              const item = localStorage.getItem(`sqkii_${key}`);
+              if (!item) return null;
+              const { data, timestamp, ttl } = JSON.parse(item);
+              if (ttl && (Date.now() - timestamp > ttl)) {
+                this.remove(key);
+                return null;
+              }
+              return data;
+            } catch (e) {
+              return null;
+            }
+          },
+          remove(key) {
+            try {
+              localStorage.removeItem(`sqkii_${key}`);
+              return true;
+            } catch (e) {
+              return false;
+            }
+          }
+        };
+
+        // OPTIMIZED: RequestAnimationFrame wrapper for smooth 60fps
+        const raf = {
+          pending: new Map(),
+          schedule(key, callback) {
+            if (this.pending.has(key)) return;
+            this.pending.set(key, true);
+            requestAnimationFrame(() => {
+              callback();
+              this.pending.delete(key);
+            });
+          }
+        };
+
         return {
           debounce,
           throttle,
@@ -1719,7 +1784,9 @@
           parseNumber,
           generateId,
           deepClone,
-          hash
+          hash,
+          cache,
+          raf
         };
       })();
 
