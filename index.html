@@ -1854,6 +1854,51 @@
           return () => element.removeEventListener(event, handler, passiveOptions);
         };
 
+        // OPTIMIZED: Geohash batcher for large datasets (prevents WebGL errors)
+        const GeohashBatcher = {
+          batchSize: 100, // Process 100 geohashes at a time
+          delay: 16, // ~60fps (16ms between batches)
+
+          /**
+           * Process large geohash arrays in batches to prevent lag
+           * @param {Array} items - Array of geohashes to process
+           * @param {Function} processFn - Function to call for each batch
+           * @param {Function} onComplete - Callback when all batches done
+           */
+          async processBatches(items, processFn, onComplete) {
+            if (!items || items.length === 0) {
+              onComplete?.();
+              return;
+            }
+
+            const batches = [];
+            for (let i = 0; i < items.length; i += this.batchSize) {
+              batches.push(items.slice(i, i + this.batchSize));
+            }
+
+            console.log(`[GeohashBatcher] Processing ${items.length} items in ${batches.length} batches`);
+
+            for (let i = 0; i < batches.length; i++) {
+              await new Promise(resolve => {
+                requestAnimationFrame(() => {
+                  processFn(batches[i], i, batches.length);
+                  setTimeout(resolve, this.delay);
+                });
+              });
+            }
+
+            console.log(`[GeohashBatcher] Completed processing ${items.length} items`);
+            onComplete?.();
+          },
+
+          /**
+           * Throttle map layer updates
+           */
+          throttleLayerUpdate: throttle((updateFn) => {
+            requestAnimationFrame(updateFn);
+          }, 100)
+        };
+
         return {
           debounce,
           throttle,
@@ -1867,7 +1912,8 @@
           hash,
           cache,
           raf,
-          addPassiveListener
+          addPassiveListener,
+          GeohashBatcher
         };
       })();
 
