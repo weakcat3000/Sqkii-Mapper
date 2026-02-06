@@ -14,36 +14,35 @@
   <link rel="dns-prefetch" href="https://unpkg.com">
   <link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
 
-  <!-- MapTiler SDK (MapLibre) - OPTIMIZED: defer for non-blocking load -->
-  <script src="https://cdn.maptiler.com/maptiler-sdk-js/v3.6.1/maptiler-sdk.umd.min.js" defer></script>
+  <!-- MapTiler SDK (MapLibre) - CRITICAL: Load synchronously -->
+  <script src="https://cdn.maptiler.com/maptiler-sdk-js/v3.6.1/maptiler-sdk.umd.min.js"></script>
   <link href="https://cdn.maptiler.com/maptiler-sdk-js/v3.6.1/maptiler-sdk.css" rel="stylesheet" />
 
-  <!-- Leaflet (OSM raster) - OPTIMIZED: defer -->
+  <!-- Leaflet (OSM raster) - CRITICAL: Load synchronously -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin defer></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
 
-  <!-- togeojson + jszip - OPTIMIZED: defer -->
-  <script src="https://unpkg.com/@tmcw/togeojson@4.7.0/dist/togeojson.umd.js" defer></script>
-  <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js" defer></script>
+  <!-- togeojson + jszip - CRITICAL: Load synchronously -->
+  <script src="https://unpkg.com/@tmcw/togeojson@4.7.0/dist/togeojson.umd.js"></script>
+  <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
 
-  <!-- Turf.js - OPTIMIZED: defer -->
-  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js" defer></script>
+  <!-- Turf.js - CRITICAL: Load synchronously -->
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
 
-  <!-- RBush (spatial index) - OPTIMIZED: defer -->
-  <script src="https://unpkg.com/rbush@3.0.1/rbush.min.js" defer></script>
+  <!-- RBush (spatial index) - CRITICAL: Load synchronously -->
+  <script src="https://unpkg.com/rbush@3.0.1/rbush.min.js"></script>
 
-  <!-- Supabase JS (UMD) - OPTIMIZED: defer -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.5/dist/umd/supabase.min.js" defer></script>
+  <!-- Supabase JS (UMD) - CRITICAL: Load synchronously -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.5/dist/umd/supabase.min.js"></script>
 
-  <!-- OGL (UMD) for Dark Veil - OPTIMIZED: defer -->
-  <script src="https://cdn.jsdelivr.net/npm/ogl@1.0.6/dist/ogl.umd.js" defer></script>
+  <!-- OGL (UMD) for Dark Veil - CRITICAL: Load synchronously -->
+  <script src="https://cdn.jsdelivr.net/npm/ogl@1.0.6/dist/ogl.umd.js"></script>
 
   <!-- Preload button click sound for instant play -->
   <link rel="preload" href="button.mp3" as="audio" />
 
-  <!-- Lottie Player - OPTIMIZED: async module -->
-  <script type="module" src="https://unpkg.com/@dotlottie/player-component@latest/dist/dotlottie-player.mjs"
-    async></script>
+  <!-- Lottie Player - Can load async -->
+  <script type="module" src="https://unpkg.com/@dotlottie/player-component@latest/dist/dotlottie-player.mjs"></script>
 
 
   <style>
