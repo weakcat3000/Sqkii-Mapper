@@ -1,0 +1,4 @@
+name = "sqkiimapper"
+main = "src/worker.js"
+compatibility_date = "2026-03-02"
+workers_dev = true
