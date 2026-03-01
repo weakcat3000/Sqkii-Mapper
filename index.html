@@ -7248,58 +7248,271 @@
         return WORKER_BASE + encodeURIComponent(url);
       }
 
-      // ALWAYS uses Worker for both poll-download and dataset download
+      const dataGovLoaderState = {
+        activeRequests: 0,
+        totalSteps: 0,
+        doneSteps: 0,
+        nextTokenId: 1,
+        mounted: false,
+        root: null,
+        status: null,
+        fill: null,
+        percent: null,
+        hideTimer: null,
+      };
+
+      function ensureDataGovLoaderUi() {
+        if (dataGovLoaderState.mounted) return;
+        if (typeof document === 'undefined' || !document.body) return;
+
+        if (!document.getElementById('dg-fetch-loader-style')) {
+          const style = document.createElement('style');
+          style.id = 'dg-fetch-loader-style';
+          style.textContent = `
+            #dg-fetch-loader {
+              position: fixed;
+              top: 12px;
+              left: 50%;
+              transform: translateX(-50%) translateY(-10px);
+              width: min(520px, calc(100vw - 20px));
+              padding: 10px 12px;
+              border-radius: 10px;
+              background: rgba(17, 22, 30, 0.95);
+              border: 1px solid rgba(255, 255, 255, 0.16);
+              box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+              color: #f5f7fa;
+              font-size: 12px;
+              line-height: 1.3;
+              z-index: 99999;
+              opacity: 0;
+              pointer-events: none;
+              transition: opacity 0.18s ease, transform 0.18s ease;
+            }
+            #dg-fetch-loader.show {
+              opacity: 1;
+              transform: translateX(-50%) translateY(0);
+            }
+            #dg-fetch-loader .dg-fetch-loader-head {
+              display: flex;
+              justify-content: space-between;
+              gap: 8px;
+            }
+            #dg-fetch-loader .dg-fetch-loader-status {
+              overflow: hidden;
+              text-overflow: ellipsis;
+              white-space: nowrap;
+            }
+            #dg-fetch-loader .dg-fetch-loader-percent {
+              font-variant-numeric: tabular-nums;
+            }
+            #dg-fetch-loader .dg-fetch-loader-track {
+              margin-top: 7px;
+              height: 7px;
+              border-radius: 999px;
+              overflow: hidden;
+              background: rgba(255, 255, 255, 0.14);
+            }
+            #dg-fetch-loader .dg-fetch-loader-fill {
+              width: 0%;
+              height: 100%;
+              border-radius: 999px;
+              background: linear-gradient(90deg, #40c463 0%, #2ea8ff 100%);
+              transition: width 0.2s ease;
+            }
+          `;
+          document.head.appendChild(style);
+        }
+
+        let root = document.getElementById('dg-fetch-loader');
+        if (!root) {
+          root = document.createElement('div');
+          root.id = 'dg-fetch-loader';
+          root.innerHTML = `
+            <div class="dg-fetch-loader-head">
+              <div class="dg-fetch-loader-status">Loading data.gov datasets...</div>
+              <div class="dg-fetch-loader-percent">0%</div>
+            </div>
+            <div class="dg-fetch-loader-track">
+              <div class="dg-fetch-loader-fill"></div>
+            </div>
+          `;
+          document.body.appendChild(root);
+        }
+
+        dataGovLoaderState.root = root;
+        dataGovLoaderState.status = root.querySelector('.dg-fetch-loader-status');
+        dataGovLoaderState.fill = root.querySelector('.dg-fetch-loader-fill');
+        dataGovLoaderState.percent = root.querySelector('.dg-fetch-loader-percent');
+        dataGovLoaderState.mounted = true;
+      }
+
+      function renderDataGovLoader(note = '') {
+        ensureDataGovLoaderUi();
+        if (!dataGovLoaderState.mounted) return;
+
+        const total = Math.max(1, dataGovLoaderState.totalSteps);
+        let percent = Math.round((dataGovLoaderState.doneSteps / total) * 100);
+        if (dataGovLoaderState.activeRequests > 0) percent = Math.max(4, Math.min(99, percent));
+        else percent = 100;
+
+        dataGovLoaderState.fill.style.width = `${percent}%`;
+        dataGovLoaderState.percent.textContent = `${percent}%`;
+        dataGovLoaderState.status.textContent = note || (
+          dataGovLoaderState.activeRequests > 0
+            ? `Loading data.gov datasets (${dataGovLoaderState.activeRequests} active)`
+            : 'Data.gov fetch complete'
+        );
+
+        if (dataGovLoaderState.activeRequests > 0) {
+          clearTimeout(dataGovLoaderState.hideTimer);
+          dataGovLoaderState.root.classList.add('show');
+          return;
+        }
+
+        clearTimeout(dataGovLoaderState.hideTimer);
+        dataGovLoaderState.hideTimer = setTimeout(() => {
+          if (!dataGovLoaderState.root) return;
+          dataGovLoaderState.root.classList.remove('show');
+          dataGovLoaderState.totalSteps = 0;
+          dataGovLoaderState.doneSteps = 0;
+        }, 450);
+      }
+
+      function beginDataGovLoader(label) {
+        const token = {
+          id: dataGovLoaderState.nextTokenId++,
+          label: label || 'Dataset',
+          totalSteps: 2,
+          doneSteps: 0,
+          closed: false,
+        };
+
+        dataGovLoaderState.activeRequests += 1;
+        dataGovLoaderState.totalSteps += token.totalSteps;
+        renderDataGovLoader(`Loading ${token.label}...`);
+        return token;
+      }
+
+      function markDataGovLoaderStep(token, note = '') {
+        if (!token || token.closed) return;
+        if (token.doneSteps < token.totalSteps) {
+          token.doneSteps += 1;
+          dataGovLoaderState.doneSteps += 1;
+        }
+        renderDataGovLoader(note || `Loading ${token.label}...`);
+      }
+
+      function finishDataGovLoader(token, failed = false) {
+        if (!token || token.closed) return;
+        token.closed = true;
+
+        const remaining = token.totalSteps - token.doneSteps;
+        if (remaining > 0) dataGovLoaderState.doneSteps += remaining;
+        dataGovLoaderState.activeRequests = Math.max(0, dataGovLoaderState.activeRequests - 1);
+
+        const msg = failed
+          ? `${token.label} failed`
+          : (dataGovLoaderState.activeRequests > 0
+            ? `Loading data.gov datasets (${dataGovLoaderState.activeRequests} active)`
+            : 'Data.gov fetch complete');
+        renderDataGovLoader(msg);
+      }
+
+      let workerProxyHealthy = null;
+
+      // Try worker first, then direct URL if worker response is invalid.
+      async function fetchJsonWithFallback(url, label, stage) {
+        const attempts = [];
+        if (workerProxyHealthy !== false && typeof WORKER_BASE === 'string' && WORKER_BASE.trim()) {
+          attempts.push({ mode: 'worker', requestUrl: workerProxy(url) });
+        }
+        attempts.push({ mode: 'direct', requestUrl: url });
+
+        let lastError = null;
+
+        for (const attempt of attempts) {
+          try {
+            const resp = await fetch(attempt.requestUrl);
+            console.log(`[${label}] ${stage} status (${attempt.mode}):`, resp.status);
+
+            if (!resp.ok) {
+              lastError = new Error(`${stage} HTTP ${resp.status} (${attempt.mode})`);
+              continue;
+            }
+
+            const raw = await resp.text();
+            const trimmed = raw.trimStart();
+            const contentType = (resp.headers.get('content-type') || '').toLowerCase();
+
+            // Typical proxy failure: HTML app shell is returned instead of JSON.
+            if (
+              trimmed.startsWith('<!DOCTYPE') ||
+              trimmed.startsWith('<html') ||
+              (contentType.includes('text/html') && trimmed.startsWith('<'))
+            ) {
+              if (attempt.mode === 'worker') workerProxyHealthy = false;
+              console.warn(`[${label}] ${stage} returned HTML (${attempt.mode}); trying next path.`);
+              lastError = new Error(`${stage} returned HTML (${attempt.mode})`);
+              continue;
+            }
+
+            try {
+              if (attempt.mode === 'worker') workerProxyHealthy = true;
+              return JSON.parse(raw);
+            } catch (parseErr) {
+              if (attempt.mode === 'worker') workerProxyHealthy = false;
+              const preview = trimmed.slice(0, 140).replace(/\s+/g, ' ');
+              console.warn(`[${label}] ${stage} invalid JSON (${attempt.mode}) preview:`, preview);
+              lastError = parseErr;
+            }
+          } catch (e) {
+            if (attempt.mode === 'worker') workerProxyHealthy = false;
+            lastError = e;
+            console.warn(`[${label}] ${stage} fetch failed (${attempt.mode})`, e);
+          }
+        }
+
+        throw lastError || new Error(`${stage} failed for all fetch paths`);
+      }
+
       async function fetchDataGovGeoJson(datasetId, label = '') {
+        const name = label || datasetId;
         const pollUrl = `https://api-open.data.gov.sg/v1/public/api/datasets/${datasetId}/poll-download`;
+        const loaderToken = beginDataGovLoader(name);
+        let hasFailure = false;
 
         try {
-          console.log(`🌐 [${label || datasetId}] poll-download via Worker:`, pollUrl);
+          const pollJson = await fetchJsonWithFallback(pollUrl, name, 'poll-download');
+          markDataGovLoaderStep(loaderToken, `Loaded poll metadata for ${name}`);
+          console.log(`[${name}] poll payload:`, pollJson);
 
-          const pollResp = await fetch(workerProxy(pollUrl));
-          console.log(`📥 [${label || datasetId}] poll status:`, pollResp.status);
-
-          if (!pollResp.ok) {
-            console.warn(`⚠️ [${label || datasetId}] poll HTTP error`, pollResp.status);
-            return null;
-          }
-
-          const pollJson = await pollResp.json();
-          console.log(`📊 [${label || datasetId}] poll payload:`, pollJson);
-
-          // Sometimes poll-download returns GeoJSON directly
+          // Sometimes poll-download returns GeoJSON directly.
           if (pollJson && pollJson.type === 'FeatureCollection' && Array.isArray(pollJson.features)) {
-            console.log(`✅ [${label || datasetId}] poll returned FeatureCollection directly`);
             return pollJson;
           }
 
           const downloadUrl = pollJson?.data?.url;
           if (!downloadUrl) {
-            console.warn(`⚠️ [${label || datasetId}] missing data.url`, pollJson);
+            hasFailure = true;
+            console.warn(`[${name}] missing data.url`, pollJson);
             return null;
           }
 
-          console.log(`⬇️ [${label || datasetId}] downloading via Worker:`, downloadUrl);
-
-          // ✅ Big file also goes through Worker (no corsproxy.io, no 1MB limit)
-          const dataResp = await fetch(workerProxy(downloadUrl));
-          console.log(`📥 [${label || datasetId}] data status:`, dataResp.status);
-
-          if (!dataResp.ok) {
-            console.warn(`⚠️ [${label || datasetId}] data HTTP error`, dataResp.status);
-            return null;
-          }
-
-          const dataJson = await dataResp.json();
-
+          const dataJson = await fetchJsonWithFallback(downloadUrl, name, 'dataset-download');
+          markDataGovLoaderStep(loaderToken, `Downloaded ${name}`);
           if (!dataJson || dataJson.type !== 'FeatureCollection' || !Array.isArray(dataJson.features)) {
-            console.warn(`⚠️ [${label || datasetId}] not a FeatureCollection`, dataJson);
+            hasFailure = true;
+            console.warn(`[${name}] dataset is not a FeatureCollection`, dataJson);
             return null;
           }
 
           return dataJson;
         } catch (e) {
-          console.error(`❌ [${label || datasetId}] fetchDataGovGeoJson failed`, e);
+          hasFailure = true;
+          console.error(`[${name}] fetchDataGovGeoJson failed`, e);
           return null;
+        } finally {
+          finishDataGovLoader(loaderToken, hasFailure);
         }
       }
 
