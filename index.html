@@ -7018,6 +7018,11 @@
 
       // Your Cloudflare Worker base
       const WORKER_BASE = "https://sqkiimapper.wk-yeow-2024.workers.dev/?url=";
+      // Optional: put a data.gov.sg API key for higher rate limits on direct poll calls.
+      const DATAGOV_API_KEY = '';
+      const DATAGOV_MAX_429_RETRIES = 4;
+      const DATAGOV_RETRY_BASE_MS = 12000;
+      const DATAGOV_RETRY_MAX_MS = 65000;
 
       // Dataset IDs
       const DATASET_IDS = {
@@ -7248,6 +7253,53 @@
         return WORKER_BASE + encodeURIComponent(url);
       }
 
+      function sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+      }
+
+      function parseRetryAfterMs(retryAfterHeader) {
+        if (!retryAfterHeader) return 0;
+
+        const seconds = Number(retryAfterHeader);
+        if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000);
+
+        const when = Date.parse(retryAfterHeader);
+        if (Number.isNaN(when)) return 0;
+
+        return Math.max(0, when - Date.now());
+      }
+
+      function buildDataGovDirectFetchOptions(url) {
+        const isDataGovApi = /^https:\/\/api-open\.data\.gov\.sg\//i.test(url);
+        if (!isDataGovApi || !DATAGOV_API_KEY) return undefined;
+        return {
+          headers: {
+            'x-api-key': DATAGOV_API_KEY,
+          },
+        };
+      }
+
+      async function fetchWith429Retry(requestUrl, options, label, stage, mode) {
+        let attempt = 0;
+        while (true) {
+          const resp = await fetch(requestUrl, options);
+          if (resp.status !== 429) return resp;
+
+          attempt += 1;
+          if (attempt > DATAGOV_MAX_429_RETRIES) return resp;
+
+          const retryAfterMs = parseRetryAfterMs(resp.headers.get('retry-after'));
+          const backoffMs = Math.min(
+            DATAGOV_RETRY_MAX_MS,
+            DATAGOV_RETRY_BASE_MS * Math.pow(2, attempt - 1)
+          );
+          const jitterMs = Math.floor(Math.random() * 400);
+          const waitMs = Math.max(retryAfterMs, backoffMs + jitterMs);
+          console.warn(`[${label}] ${stage} 429 (${mode}); retry ${attempt}/${DATAGOV_MAX_429_RETRIES} in ${waitMs}ms`);
+          await sleep(waitMs);
+        }
+      }
+
       const dataGovLoaderState = {
         activeRequests: 0,
         totalSteps: 0,
@@ -7420,69 +7472,108 @@
 
       let workerProxyHealthy = null;
 
+      let dataGovPollQueue = Promise.resolve();
+
+      function enqueueDataGovPoll(task) {
+        const run = dataGovPollQueue.then(task, task);
+        dataGovPollQueue = run.catch(() => { });
+        return run;
+      }
+
       // Try worker first, then direct URL if worker response is invalid.
-      async function fetchJsonWithFallback(url, label, stage) {
+      async function fetchJsonWithFallback(url, label, stage, options = {}) {
+        const allowDirect = options.allowDirect !== false;
+        const queued = options.queued === true;
+
         const attempts = [];
         if (workerProxyHealthy !== false && typeof WORKER_BASE === 'string' && WORKER_BASE.trim()) {
           attempts.push({ mode: 'worker', requestUrl: workerProxy(url) });
         }
-        attempts.push({ mode: 'direct', requestUrl: url });
+        if (allowDirect) {
+          attempts.push({ mode: 'direct', requestUrl: url });
+        }
+
+        if (!attempts.length) {
+          throw new Error(`${stage} has no available fetch path (worker disabled and direct disallowed)`);
+        }
 
         let lastError = null;
 
-        for (const attempt of attempts) {
-          try {
-            const resp = await fetch(attempt.requestUrl);
-            console.log(`[${label}] ${stage} status (${attempt.mode}):`, resp.status);
-
-            if (!resp.ok) {
-              lastError = new Error(`${stage} HTTP ${resp.status} (${attempt.mode})`);
-              continue;
-            }
-
-            const raw = await resp.text();
-            const trimmed = raw.trimStart();
-            const contentType = (resp.headers.get('content-type') || '').toLowerCase();
-
-            // Typical proxy failure: HTML app shell is returned instead of JSON.
-            if (
-              trimmed.startsWith('<!DOCTYPE') ||
-              trimmed.startsWith('<html') ||
-              (contentType.includes('text/html') && trimmed.startsWith('<'))
-            ) {
-              if (attempt.mode === 'worker') workerProxyHealthy = false;
-              console.warn(`[${label}] ${stage} returned HTML (${attempt.mode}); trying next path.`);
-              lastError = new Error(`${stage} returned HTML (${attempt.mode})`);
-              continue;
-            }
-
+        const runAttempts = async () => {
+          for (const attempt of attempts) {
             try {
-              if (attempt.mode === 'worker') workerProxyHealthy = true;
-              return JSON.parse(raw);
-            } catch (parseErr) {
-              if (attempt.mode === 'worker') workerProxyHealthy = false;
-              const preview = trimmed.slice(0, 140).replace(/\s+/g, ' ');
-              console.warn(`[${label}] ${stage} invalid JSON (${attempt.mode}) preview:`, preview);
-              lastError = parseErr;
-            }
-          } catch (e) {
-            if (attempt.mode === 'worker') workerProxyHealthy = false;
-            lastError = e;
-            console.warn(`[${label}] ${stage} fetch failed (${attempt.mode})`, e);
-          }
-        }
+              const directOpts = attempt.mode === 'direct'
+                ? buildDataGovDirectFetchOptions(url)
+                : undefined;
+              const resp = await fetchWith429Retry(attempt.requestUrl, directOpts, label, stage, attempt.mode);
+              console.log(`[${label}] ${stage} status (${attempt.mode}):`, resp.status);
 
-        throw lastError || new Error(`${stage} failed for all fetch paths`);
+              if (!resp.ok) {
+                lastError = new Error(`${stage} HTTP ${resp.status} (${attempt.mode})`);
+                continue;
+              }
+
+              const raw = await resp.text();
+              const trimmed = raw.trimStart();
+              const contentType = (resp.headers.get('content-type') || '').toLowerCase();
+
+              // Typical proxy failure: HTML app shell is returned instead of JSON.
+              if (
+                trimmed.startsWith('<!DOCTYPE') ||
+                trimmed.startsWith('<html') ||
+                (contentType.includes('text/html') && trimmed.startsWith('<'))
+              ) {
+                if (attempt.mode === 'worker') workerProxyHealthy = false;
+                console.warn(`[${label}] ${stage} returned HTML (${attempt.mode}); trying next path.`);
+                lastError = new Error(`${stage} returned HTML (${attempt.mode})`);
+                continue;
+              }
+
+              try {
+                if (attempt.mode === 'worker') workerProxyHealthy = true;
+                return JSON.parse(raw);
+              } catch (parseErr) {
+                if (attempt.mode === 'worker') workerProxyHealthy = false;
+                const preview = trimmed.slice(0, 140).replace(/\s+/g, ' ');
+                console.warn(`[${label}] ${stage} invalid JSON (${attempt.mode}) preview:`, preview);
+                lastError = parseErr;
+              }
+            } catch (e) {
+              if (attempt.mode === 'worker') workerProxyHealthy = false;
+              lastError = e;
+              console.warn(`[${label}] ${stage} fetch failed (${attempt.mode})`, e);
+            }
+          }
+          throw lastError || new Error(`${stage} failed for all fetch paths`);
+        };
+
+        if (queued) return enqueueDataGovPoll(runAttempts);
+        return runAttempts();
       }
+
+      const dataGovGeoJsonCache = new Map();
+      const dataGovGeoJsonInFlight = new Map();
 
       async function fetchDataGovGeoJson(datasetId, label = '') {
         const name = label || datasetId;
+
+        if (dataGovGeoJsonCache.has(datasetId)) {
+          return dataGovGeoJsonCache.get(datasetId);
+        }
+        if (dataGovGeoJsonInFlight.has(datasetId)) {
+          return dataGovGeoJsonInFlight.get(datasetId);
+        }
+
+        const run = (async () => {
         const pollUrl = `https://api-open.data.gov.sg/v1/public/api/datasets/${datasetId}/poll-download`;
         const loaderToken = beginDataGovLoader(name);
         let hasFailure = false;
 
         try {
-          const pollJson = await fetchJsonWithFallback(pollUrl, name, 'poll-download');
+          const pollJson = await fetchJsonWithFallback(pollUrl, name, 'poll-download', {
+            allowDirect: true,
+            queued: true,
+          });
           markDataGovLoaderStep(loaderToken, `Loaded poll metadata for ${name}`);
           console.log(`[${name}] poll payload:`, pollJson);
 
@@ -7498,7 +7589,10 @@
             return null;
           }
 
-          const dataJson = await fetchJsonWithFallback(downloadUrl, name, 'dataset-download');
+          const dataJson = await fetchJsonWithFallback(downloadUrl, name, 'dataset-download', {
+            // Browser direct fetch to S3 signed URL is blocked by CORS.
+            allowDirect: false,
+          });
           markDataGovLoaderStep(loaderToken, `Downloaded ${name}`);
           if (!dataJson || dataJson.type !== 'FeatureCollection' || !Array.isArray(dataJson.features)) {
             hasFailure = true;
@@ -7506,14 +7600,23 @@
             return null;
           }
 
+          dataGovGeoJsonCache.set(datasetId, dataJson);
           return dataJson;
         } catch (e) {
           hasFailure = true;
+          if (String(e?.message || '').includes('no available fetch path')) {
+            console.error(`[${name}] dataset download needs a working proxy endpoint in WORKER_BASE.`);
+          }
           console.error(`[${name}] fetchDataGovGeoJson failed`, e);
           return null;
         } finally {
           finishDataGovLoader(loaderToken, hasFailure);
+          dataGovGeoJsonInFlight.delete(datasetId);
         }
+        })();
+
+        dataGovGeoJsonInFlight.set(datasetId, run);
+        return run;
       }
 
       /* =========== GLIMPSE TRAFFIC SIGNS OVERLAY =========== */
